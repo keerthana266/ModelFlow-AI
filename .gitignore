@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+.env/
+
+# Storage (VERY IMPORTANT)
+backend/storage/datasets/
+backend/storage/models/
+backend/storage/experiments/
+
+# OS files
+.DS_Store
+Thumbs.db
