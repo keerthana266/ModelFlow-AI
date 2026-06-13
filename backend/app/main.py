@@ -1,5 +1,5 @@
 from fastapi import FastAPI, File, HTTPException, UploadFile
-
+from fastapi.middleware.cors import CORSMiddleware
 from app.ml.predictor import make_prediction
 from app.ml.profiler import profile_csv_dataset
 from app.ml.trainer import train_automl
@@ -19,6 +19,16 @@ app = FastAPI(
     version="1.0.0",
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.on_event("startup")
 def startup_event():
