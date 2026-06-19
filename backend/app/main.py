@@ -5,7 +5,8 @@ from celery.result import AsyncResult
 from app.ml.predictor import make_prediction
 from app.ml.profiler import profile_csv_dataset
 from app.ml.trainer import train_automl
-from app.schemas.requests import PredictRequest, TrainRequest
+from app.ml.transpiler import execute_pipeline_graph
+from app.schemas.requests import PredictRequest, TrainRequest, PipelineExecutionRequest
 from app.services.storage import (
     create_storage_folders,
     get_dataset_path,
@@ -145,5 +146,18 @@ def predict_with_model(model_id: str, request: PredictRequest):
             input_data=request.data,
         )
 
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+@app.post("/pipeline/execute")
+def execute_visual_pipeline(request: PipelineExecutionRequest):
+    try:
+        # Convert Pydantic objects to standard dictionaries for the transpiler
+        nodes_dict = [node.model_dump() for node in request.nodes]
+        edges_dict = [edge.model_dump() for edge in request.edges]
+        
+        result = execute_pipeline_graph(nodes_dict, edges_dict)
+        return result
+    
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
