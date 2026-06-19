@@ -1,6 +1,8 @@
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from celery.result import AsyncResult
+import asyncio
+from fastapi import WebSocket, WebSocketDisconnect
 
 from app.ml.predictor import make_prediction
 from app.ml.profiler import profile_csv_dataset
@@ -161,3 +163,51 @@ def execute_visual_pipeline(request: PipelineExecutionRequest):
     
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.websocket("/ws/task/{task_id}")
+async def task_status_websocket(websocket: WebSocket, task_id: str):
+    await websocket.accept()
+    
+    try:
+        previous_state = None
+        previous_message = None
+        
+        while True:
+            # Check the current status of the background task
+            task_result = AsyncResult(task_id, app=celery_app)
+            current_state = task_result.state
+            
+            # Extract the meta dictionary we pass via self.update_state() in trainer.py
+            meta = task_result.info if isinstance(task_result.info, dict) else {}
+            current_message = meta.get("message", "")
+            
+            # Only send data over the network if something actually changed
+            if current_state != previous_state or current_message != previous_message:
+                
+                payload = {
+                    "task_id": task_id,
+                    "status": current_state,
+                    "message": current_message,
+                }
+                
+                # If finished, attach the final payload or error
+                if current_state == "SUCCESS":
+                    payload["result"] = task_result.result
+                elif current_state == "FAILURE":
+                    payload["error"] = str(task_result.result)
+                    
+                await websocket.send_json(payload)
+                
+                previous_state = current_state
+                previous_message = current_message
+            
+            # Kill the loop and close the tunnel if the task is finished
+            if current_state in ["SUCCESS", "FAILURE"]:
+                break
+            
+            # Pause for half a second before checking again to avoid frying the CPU
+            await asyncio.sleep(0.5)
+            
+    except WebSocketDisconnect:
+        print(f"Client disconnected from task {task_id} stream.")
