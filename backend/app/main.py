@@ -1,8 +1,7 @@
-from fastapi import FastAPI, File, HTTPException, UploadFile
+import asyncio
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from celery.result import AsyncResult
-import asyncio
-from fastapi import WebSocket, WebSocketDisconnect
 
 from app.ml.predictor import make_prediction
 from app.ml.profiler import profile_csv_dataset
@@ -83,7 +82,6 @@ def start_experiment(request: TrainRequest):
     try:
         dataset_path = get_dataset_path(request.dataset_id)
 
-        # Trigger Celery background task
         task = train_automl.delay(
             dataset_path_str=str(dataset_path),
             target_column=request.target_column,
@@ -154,7 +152,6 @@ def predict_with_model(model_id: str, request: PredictRequest):
 @app.post("/pipeline/execute")
 def execute_visual_pipeline(request: PipelineExecutionRequest):
     try:
-        # Convert Pydantic objects to standard dictionaries for the transpiler
         nodes_dict = [node.model_dump() for node in request.nodes]
         edges_dict = [edge.model_dump() for edge in request.edges]
         
@@ -163,7 +160,6 @@ def execute_visual_pipeline(request: PipelineExecutionRequest):
     
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
-
 
 @app.websocket("/ws/task/{task_id}")
 async def task_status_websocket(websocket: WebSocket, task_id: str):
@@ -174,15 +170,12 @@ async def task_status_websocket(websocket: WebSocket, task_id: str):
         previous_message = None
         
         while True:
-            # Check the current status of the background task
             task_result = AsyncResult(task_id, app=celery_app)
             current_state = task_result.state
             
-            # Extract the meta dictionary we pass via self.update_state() in trainer.py
             meta = task_result.info if isinstance(task_result.info, dict) else {}
             current_message = meta.get("message", "")
             
-            # Only send data over the network if something actually changed
             if current_state != previous_state or current_message != previous_message:
                 
                 payload = {
@@ -191,7 +184,6 @@ async def task_status_websocket(websocket: WebSocket, task_id: str):
                     "message": current_message,
                 }
                 
-                # If finished, attach the final payload or error
                 if current_state == "SUCCESS":
                     payload["result"] = task_result.result
                 elif current_state == "FAILURE":
@@ -202,11 +194,9 @@ async def task_status_websocket(websocket: WebSocket, task_id: str):
                 previous_state = current_state
                 previous_message = current_message
             
-            # Kill the loop and close the tunnel if the task is finished
             if current_state in ["SUCCESS", "FAILURE"]:
                 break
             
-            # Pause for half a second before checking again to avoid frying the CPU
             await asyncio.sleep(0.5)
             
     except WebSocketDisconnect:

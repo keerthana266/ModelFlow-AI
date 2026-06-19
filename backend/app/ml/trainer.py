@@ -4,8 +4,9 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-
+import shap
 from flaml import AutoML
+
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -99,7 +100,7 @@ def train_automl(self, dataset_path_str: str, target_column: str) -> dict:
 
     X_train, X_test, y_train, y_test = safe_train_test_split(X, y, problem_type)
 
-    # 1. Preprocess the data before handing it to FLAML
+    # 1. Preprocess the data
     self.update_state(state='PROGRESS', meta={'message': 'Preprocessing features...'})
     preprocessor = build_preprocessor(X_train)
     X_train_transformed = preprocessor.fit_transform(X_train)
@@ -107,23 +108,22 @@ def train_automl(self, dataset_path_str: str, target_column: str) -> dict:
 
     # 2. Configure FLAML settings
     self.update_state(state='PROGRESS', meta={'message': 'FLAML is actively optimizing models. Please wait...'})
-    
     automl = AutoML()
     automl_settings = {
-        "time_budget": 30,  # Let FLAML search for 30 seconds
+        "time_budget": 30,  # 30 seconds limit
         "metric": "f1" if problem_type == "classification" else "r2",
         "task": problem_type,
-        "verbose": 0,       # Turn off heavy console logging
+        "verbose": 0,
     }
 
-    # 3. Let FLAML do the heavy lifting
+    # 3. Train
     automl.fit(X_train=X_train_transformed, y_train=y_train, **automl_settings)
 
-    # 4. Extract the winning model
+    # 4. Extract winning model
     best_estimator_name = automl.best_estimator
     best_model_instance = automl.model.estimator
 
-    # 5. Reconstruct the pipeline to maintain compatibility with predictor.py
+    # 5. Package Pipeline
     self.update_state(state='PROGRESS', meta={'message': 'Packaging the optimized pipeline...'})
     final_pipeline = Pipeline(
         steps=[
@@ -132,7 +132,28 @@ def train_automl(self, dataset_path_str: str, target_column: str) -> dict:
         ]
     )
 
-    # 6. Evaluate on Test Data
+    # 6. Calculate SHAP Explainability
+    self.update_state(state='PROGRESS', meta={'message': 'Calculating SHAP feature importance...'})
+    try:
+        feature_names = preprocessor.get_feature_names_out()
+        background_data = shap.sample(X_train_transformed, 100)
+        explainer = shap.Explainer(best_model_instance, background_data)
+        shap_values = explainer(X_test_transformed)
+        
+        if len(shap_values.values.shape) == 3:
+            mean_abs_shap = np.abs(shap_values.values).mean(axis=(0, 2))
+        else:
+            mean_abs_shap = np.abs(shap_values.values).mean(axis=0)
+            
+        feature_importance = {
+            name.replace("num__", "").replace("cat__", ""): round(float(val), 4)
+            for name, val in zip(feature_names, mean_abs_shap)
+        }
+        feature_importance = dict(sorted(feature_importance.items(), key=lambda item: item[1], reverse=True))
+    except Exception as e:
+        feature_importance = {"error": f"SHAP calculation not supported. {str(e)}"}
+
+    # 7. Evaluate and Save
     predictions = final_pipeline.predict(X_test)
 
     if problem_type == "classification":
@@ -162,8 +183,6 @@ def train_automl(self, dataset_path_str: str, target_column: str) -> dict:
 
     joblib.dump(model_package, model_path)
 
-    # 7. Construct final result
-    # We output a leaderboard of 1, because FLAML has already done the ranking internally!
     leaderboard = [
         {
             "model_id": model_id,
@@ -188,6 +207,7 @@ def train_automl(self, dataset_path_str: str, target_column: str) -> dict:
         "categorical_columns": column_groups["categorical_columns"],
         "main_metric": main_metric,
         "best_model_id": model_id,
+        "feature_importance": feature_importance,
         "leaderboard": leaderboard,
         "created_at": utc_now_iso(),
     }

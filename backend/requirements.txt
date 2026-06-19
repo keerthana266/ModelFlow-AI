@@ -8,3 +8,5 @@ joblib
 pydantic
 celery
 redis
+flaml[automl]
+shap
