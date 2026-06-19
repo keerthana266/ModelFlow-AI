@@ -1,5 +1,7 @@
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from celery.result import AsyncResult
+
 from app.ml.predictor import make_prediction
 from app.ml.profiler import profile_csv_dataset
 from app.ml.trainer import train_automl
@@ -8,10 +10,9 @@ from app.services.storage import (
     create_storage_folders,
     get_dataset_path,
     load_experiment_result,
-    save_experiment_result,
     save_uploaded_dataset,
 )
-
+from app.worker import celery_app
 
 app = FastAPI(
     title="AutoML Forge API",
@@ -34,14 +35,12 @@ app.add_middleware(
 def startup_event():
     create_storage_folders()
 
-
 @app.get("/")
 def root():
     return {
         "message": "AutoML Forge API is running.",
         "docs_url": "/docs",
     }
-
 
 @app.post("/datasets/upload")
 def upload_dataset(file: UploadFile = File(...)):
@@ -62,7 +61,6 @@ def upload_dataset(file: UploadFile = File(...)):
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 
-
 @app.get("/datasets/{dataset_id}/profile")
 def get_dataset_profile(dataset_id: str):
     try:
@@ -77,31 +75,42 @@ def get_dataset_profile(dataset_id: str):
     except Exception as error:
         raise HTTPException(status_code=404, detail=str(error))
 
-
 @app.post("/experiments/start")
 def start_experiment(request: TrainRequest):
     try:
         dataset_path = get_dataset_path(request.dataset_id)
 
-        result = train_automl(
-            dataset_path=dataset_path,
+        # Trigger Celery background task
+        task = train_automl.delay(
+            dataset_path_str=str(dataset_path),
             target_column=request.target_column,
         )
 
-        experiment_file = save_experiment_result(
-            result["experiment_id"],
-            result,
-        )
-
         return {
-            "message": "Experiment completed successfully.",
-            "experiment_file": str(experiment_file),
-            "result": result,
+            "message": "Experiment queued successfully. Polling required.",
+            "task_id": task.id,
         }
 
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 
+@app.get("/experiments/task/{task_id}")
+def get_task_status(task_id: str):
+    task_result = AsyncResult(task_id, app=celery_app)
+    
+    response = {
+        "task_id": task_id,
+        "status": task_result.status,
+    }
+
+    if task_result.status == "SUCCESS":
+        response["result"] = task_result.result
+    elif task_result.status == "FAILURE":
+        response["error"] = str(task_result.result)
+    elif task_result.status == "PROGRESS":
+        response["details"] = task_result.info 
+        
+    return response
 
 @app.get("/experiments/{experiment_id}/leaderboard")
 def get_experiment_leaderboard(experiment_id: str):
@@ -120,7 +129,6 @@ def get_experiment_leaderboard(experiment_id: str):
     except Exception as error:
         raise HTTPException(status_code=404, detail=str(error))
 
-
 @app.get("/experiments/{experiment_id}")
 def get_experiment_details(experiment_id: str):
     try:
@@ -128,7 +136,6 @@ def get_experiment_details(experiment_id: str):
 
     except Exception as error:
         raise HTTPException(status_code=404, detail=str(error))
-
 
 @app.post("/models/{model_id}/predict")
 def predict_with_model(model_id: str, request: PredictRequest):

@@ -27,7 +27,8 @@ from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 from app.ml.detector import detect_problem_type
 from app.ml.preprocessor import build_preprocessor, get_column_groups
-from app.services.storage import MODEL_DIR, generate_id
+from app.services.storage import MODEL_DIR, generate_id, save_experiment_result
+from app.worker import celery_app
 
 
 def utc_now_iso() -> str:
@@ -146,8 +147,12 @@ def validate_training_data(df: pd.DataFrame, target_column: str) -> None:
             "Dataset must contain at least one feature column and one target column."
         )
 
-
-def train_automl(dataset_path: Path, target_column: str) -> dict:
+@celery_app.task(bind=True, name="train_automl_task")
+def train_automl(self, dataset_path_str: str, target_column: str) -> dict:
+    
+    self.update_state(state='PROGRESS', meta={'message': 'Loading dataset...'})
+    dataset_path = Path(dataset_path_str)
+    
     df = pd.read_csv(dataset_path)
 
     validate_training_data(df, target_column)
@@ -187,7 +192,20 @@ def train_automl(dataset_path: Path, target_column: str) -> dict:
     best_model_id = None
     best_score = -999999.0
 
+    total_models = len(models)
+    current_model_idx = 0
+
     for model_name, model in models.items():
+        current_model_idx += 1
+        self.update_state(
+            state='PROGRESS', 
+            meta={
+                'message': f'Training {model_name} ({current_model_idx}/{total_models})...',
+                'current': current_model_idx,
+                'total': total_models
+            }
+        )
+        
         try:
             preprocessor = build_preprocessor(X_train)
 
@@ -260,7 +278,7 @@ def train_automl(dataset_path: Path, target_column: str) -> dict:
     for item in leaderboard:
         item["is_best_model"] = item.get("model_id") == best_model_id
 
-    return {
+    result = {
         "experiment_id": generate_id("experiment"),
         "problem_type": problem_type,
         "target_column": target_column,
@@ -274,3 +292,8 @@ def train_automl(dataset_path: Path, target_column: str) -> dict:
         "leaderboard": leaderboard,
         "created_at": utc_now_iso(),
     }
+    
+    # Save the result to disk from the worker before returning
+    save_experiment_result(result["experiment_id"], result)
+    
+    return result
