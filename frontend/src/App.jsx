@@ -12,6 +12,7 @@ import axios from 'axios';
 
 import DataLoaderNode from './components/DataLoaderNode';
 import AutoMLNode from './components/AutoMLNode';
+import ResultsDashboard from './components/ResultsDashboard';
 
 const nodeTypes = {
   dataLoader: DataLoaderNode,
@@ -173,6 +174,11 @@ export default function App() {
             <Background color="#cbd5e1" gap={16} size={1} />
             <Controls className="bg-white border-slate-200 shadow-md" />
           </ReactFlow>
+
+          <ResultsDashboard 
+            result={finalResult} 
+            onClose={() => setFinalResult(null)} 
+          />
         </div>
 
         {/* Live Execution Terminal Overlay */}
