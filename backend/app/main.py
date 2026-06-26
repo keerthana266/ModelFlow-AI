@@ -1,7 +1,8 @@
 import asyncio
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from celery.result import AsyncResult
+from sqlalchemy.orm import Session
 
 from app.ml.predictor import make_prediction
 from app.ml.profiler import profile_csv_dataset
@@ -15,10 +16,16 @@ from app.services.storage import (
     save_uploaded_dataset,
 )
 from app.worker import celery_app
+from sqlalchemy.sql import text
+from app.db.database import engine
+
+# Import the production database layers
+from app.db.database import get_db
+from app.db import models
 
 app = FastAPI(
     title="AutoML Forge API",
-    description="Sprint 1 backend for a no-code AutoML platform.",
+    description="Production-ready engine for a no-code AutoML platform.",
     version="1.0.0",
 )
 
@@ -35,12 +42,26 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event():
+    # 1. Create local storage folders for your datasets
     create_storage_folders()
+    
+    # 2. Verify PostgreSQL Connection Connectivity
+    print("Connecting to PostgreSQL database...")
+    try:
+        # Establish a temporary connection and run a dummy query
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        print("DATABASE STATUS: Successfully connected to PostgreSQL!")
+    except Exception as e:
+        print("DATABASE STATUS: Connection FAILED!")
+        print(f"Error Details: {e}")
+        print(" Please verify that your PostgreSQL server is running and your .env URL is correct.")
+    
 
 @app.get("/")
 def root():
     return {
-        "message": "AutoML Forge API is running.",
+        "message": "AutoML Forge API is running with production PostgreSQL pooling active.",
         "docs_url": "/docs",
     }
 
@@ -59,7 +80,6 @@ def upload_dataset(file: UploadFile = File(...)):
                 "column_names": profile["column_names"],
             },
         }
-
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 
@@ -71,9 +91,8 @@ def get_dataset_profile(dataset_id: str):
 
         return {
             "dataset_id": dataset_id,
-            **profile,
+            "**profile": profile,
         }
-
     except Exception as error:
         raise HTTPException(status_code=404, detail=str(error))
 
@@ -91,7 +110,6 @@ def start_experiment(request: TrainRequest):
             "message": "Experiment queued successfully. Polling required.",
             "task_id": task.id,
         }
-
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 
@@ -114,10 +132,23 @@ def get_task_status(task_id: str):
     return response
 
 @app.get("/experiments/{experiment_id}/leaderboard")
-def get_experiment_leaderboard(experiment_id: str):
+def get_experiment_leaderboard(experiment_id: str, db: Session = Depends(get_db)):
     try:
+        # First check the centralized PostgreSQL records for the trained result
+        record = db.query(models.ExperimentResult).filter(models.ExperimentResult.experiment_id == experiment_id).first()
+        
+        if record:
+            return {
+                "experiment_id": record.experiment_id,
+                "problem_type": record.problem_type,
+                "target_column": record.target_column,
+                "main_metric": record.main_metric,
+                "best_model_id": record.best_model_id,
+                "leaderboard": record.leaderboard,
+            }
+        
+        # Fallback to local storage utilities if the database migration sync is catching up
         result = load_experiment_result(experiment_id)
-
         return {
             "experiment_id": experiment_id,
             "problem_type": result["problem_type"],
@@ -126,15 +157,26 @@ def get_experiment_leaderboard(experiment_id: str):
             "best_model_id": result["best_model_id"],
             "leaderboard": result["leaderboard"],
         }
-
     except Exception as error:
         raise HTTPException(status_code=404, detail=str(error))
 
 @app.get("/experiments/{experiment_id}")
-def get_experiment_details(experiment_id: str):
+def get_experiment_details(experiment_id: str, db: Session = Depends(get_db)):
     try:
+        record = db.query(models.ExperimentResult).filter(models.ExperimentResult.experiment_id == experiment_id).first()
+        if record:
+            return {
+                "experiment_id": record.experiment_id,
+                "problem_type": record.problem_type,
+                "target_column": record.target_column,
+                "rows_used": record.rows_used,
+                "best_model_id": record.best_model_id,
+                "main_metric": record.main_metric,
+                "best_score": record.best_score,
+                "feature_importance": record.feature_importance,
+                "leaderboard": record.leaderboard,
+            }
         return load_experiment_result(experiment_id)
-
     except Exception as error:
         raise HTTPException(status_code=404, detail=str(error))
 
@@ -145,7 +187,6 @@ def predict_with_model(model_id: str, request: PredictRequest):
             model_id=model_id,
             input_data=request.data,
         )
-
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 
@@ -157,9 +198,31 @@ def execute_visual_pipeline(request: PipelineExecutionRequest):
         
         result = execute_pipeline_graph(nodes_dict, edges_dict)
         return result
-    
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
+
+@app.post("/pipeline/save")
+def save_visual_pipeline(request: PipelineExecutionRequest, db: Session = Depends(get_db)):
+    """
+    Serializes and commits the present structural configuration of the React Flow frontend 
+    canvas directly into a relational PostgreSQL snapshot.
+    """
+    try:
+        new_graph = models.PipelineGraph(
+            nodes=[node.model_dump() for node in request.nodes],
+            edges=[edge.model_dump() for edge in request.edges]
+        )
+        db.add(new_graph)
+        db.commit()
+        db.refresh(new_graph)
+        
+        return {
+            "message": "Visual canvas state committed successfully to PostgreSQL.", 
+            "graph_id": str(new_graph.id)
+        }
+    except Exception as error:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Database persistence failed to process transaction.")
 
 @app.websocket("/ws/task/{task_id}")
 async def task_status_websocket(websocket: WebSocket, task_id: str):
@@ -177,7 +240,6 @@ async def task_status_websocket(websocket: WebSocket, task_id: str):
             current_message = meta.get("message", "")
             
             if current_state != previous_state or current_message != previous_message:
-                
                 payload = {
                     "task_id": task_id,
                     "status": current_state,
