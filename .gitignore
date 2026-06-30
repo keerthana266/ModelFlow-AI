@@ -17,3 +17,5 @@ Thumbs.db
 backend/.env
 backend/alembic/env.py
 frontend/.env
+backend/.venv/
+backend/mlruns

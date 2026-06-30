@@ -396,7 +396,9 @@ def get_experiment_details(
                 "created_at": record.created_at,
             }
 
-        return load_experiment_result(experiment_id)
+        result = load_experiment_result(experiment_id)
+        result["leaderboard"] = sanitize_leaderboard(result.get("leaderboard", []))
+        return result
 
     except Exception as error:
         raise HTTPException(status_code=404, detail=str(error))

@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import joblib
+import mlflow
+import mlflow.sklearn
 import numpy as np
 import pandas as pd
 import shap
@@ -21,6 +23,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 
+from app.core.config import settings
 from app.db import models
 from app.db.database import Base, SessionLocal, engine
 from app.ml.detector import detect_problem_type
@@ -153,6 +156,93 @@ def calculate_shap_importance(
     except Exception as error:
         return {
             "error": f"SHAP calculation not supported for this model. {str(error)}"
+        }
+
+
+def log_training_run_to_mlflow(
+    model_path,
+    result: dict,
+    metrics: dict,
+    feature_importance: dict,
+    best_estimator_name: str,
+    time_budget: int,
+) -> dict:
+    """
+    Logs training metadata, metrics, feature importance, and the saved .joblib
+    model artifact to MLflow.
+
+    This avoids MLflow sklearn serialization issues on Windows.
+    """
+
+    try:
+        mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
+        mlflow.set_experiment(settings.MLFLOW_EXPERIMENT_NAME)
+
+        run_name = f"{result['experiment_id']}__{best_estimator_name}"
+
+        with mlflow.start_run(run_name=run_name) as run:
+            mlflow.set_tag("mlflow.source.name", "AutoML Forge Celery Worker")
+            mlflow.set_tag("project", "AutoML Forge")
+            mlflow.set_tag("run_type", "automl_training")
+            mlflow.set_tag("training_status", "completed")
+
+            mlflow.log_params(
+                {
+                    "experiment_id": result["experiment_id"],
+                    "best_model_id": result["best_model_id"],
+                    "best_estimator": best_estimator_name,
+                    "problem_type": result["problem_type"],
+                    "target_column": result["target_column"],
+                    "rows_used": result["rows_used"],
+                    "total_columns": result["total_columns"],
+                    "main_metric": result["main_metric"],
+                    "time_budget": time_budget,
+                    "num_features": len(result["feature_columns"]),
+                }
+            )
+
+            for metric_name, metric_value in metrics.items():
+                if isinstance(metric_value, (int, float)):
+                    mlflow.log_metric(metric_name, float(metric_value))
+
+            mlflow.log_dict(
+                {
+                    "feature_columns": result["feature_columns"],
+                    "numerical_columns": result["numerical_columns"],
+                    "categorical_columns": result["categorical_columns"],
+                },
+                "columns.json",
+            )
+
+            mlflow.log_dict(
+                feature_importance,
+                "feature_importance.json",
+            )
+
+            try:
+                mlflow.log_artifact(
+                    local_path=str(model_path),
+                    artifact_path="model_package",
+                )
+                mlflow.set_tag("model_log_status", "success")
+                model_logged = True
+
+            except Exception as error:
+                mlflow.set_tag("model_log_status", "failed")
+                mlflow.set_tag("model_log_error", str(error)[:500])
+                model_logged = False
+
+            return {
+                "mlflow_tracking_uri": settings.MLFLOW_TRACKING_URI,
+                "mlflow_experiment_name": settings.MLFLOW_EXPERIMENT_NAME,
+                "mlflow_run_id": run.info.run_id,
+                "mlflow_artifact_uri": run.info.artifact_uri,
+                "mlflow_model_logged": model_logged,
+            }
+
+    except Exception as error:
+        return {
+            "mlflow_error": str(error),
         }
 
 
@@ -362,6 +452,28 @@ def train_automl(
         "time_budget": time_budget,
         "created_at": utc_now_iso(),
     }
+
+    self.update_state(
+        state="PROGRESS",
+        meta={"message": "Logging experiment to MLflow..."},
+    )
+
+    mlflow_info = log_training_run_to_mlflow(
+         model_path=model_path,
+         result=result,
+         metrics=metrics,
+         feature_importance=feature_importance,
+         best_estimator_name=best_estimator_name,
+         time_budget=time_budget,
+    )
+
+    result.update(mlflow_info)
+
+    if "mlflow_run_id" in mlflow_info:
+        result["leaderboard"][0]["mlflow_run_id"] = mlflow_info["mlflow_run_id"]
+        result["leaderboard"][0]["mlflow_artifact_uri"] = mlflow_info.get(
+            "mlflow_artifact_uri"
+        )
 
     save_experiment_result(result["experiment_id"], result)
     save_training_result_to_database(result, str(model_path))
