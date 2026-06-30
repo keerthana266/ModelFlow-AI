@@ -341,7 +341,6 @@ def train_automl(
             "metrics": metrics,
             "main_metric": main_metric,
             "score": score,
-            "model_path": str(model_path),
             "is_best_model": True,
         }
     ]

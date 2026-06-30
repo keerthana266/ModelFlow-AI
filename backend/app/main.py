@@ -55,6 +55,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def sanitize_leaderboard(leaderboard):
+    cleaned_leaderboard = []
+
+    for item in leaderboard or []:
+        cleaned_item = dict(item)
+        cleaned_item.pop("model_path", None)
+        cleaned_leaderboard.append(cleaned_item)
+
+    return cleaned_leaderboard
+
 
 @app.on_event("startup")
 def startup_event():
@@ -342,7 +352,7 @@ def get_experiment_leaderboard(
                 "target_column": record.target_column,
                 "main_metric": record.main_metric,
                 "best_model_id": record.best_model_id,
-                "leaderboard": record.leaderboard,
+                "leaderboard": sanitize_leaderboard(record.leaderboard),
             }
 
         result = load_experiment_result(experiment_id)
@@ -353,7 +363,7 @@ def get_experiment_leaderboard(
             "target_column": result["target_column"],
             "main_metric": result["main_metric"],
             "best_model_id": result["best_model_id"],
-            "leaderboard": result["leaderboard"],
+            "leaderboard": sanitize_leaderboard(result["leaderboard"]),
         }
 
     except Exception as error:
@@ -382,7 +392,7 @@ def get_experiment_details(
                 "main_metric": record.main_metric,
                 "best_score": record.best_score,
                 "feature_importance": record.feature_importance,
-                "leaderboard": record.leaderboard,
+                "leaderboard": sanitize_leaderboard(record.leaderboard),
                 "created_at": record.created_at,
             }
 
@@ -445,7 +455,6 @@ def get_model_details(
         "feature_columns": model.feature_columns,
         "numerical_columns": model.numerical_columns,
         "categorical_columns": model.categorical_columns,
-        "model_path": model.model_path,
         "created_at": model.created_at,
     }
 

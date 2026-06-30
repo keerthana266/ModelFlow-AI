@@ -213,13 +213,17 @@ export default function App() {
   };
 
   const refreshRegistry = async () => {
-    const [experimentResponse, modelResponse, predictionResponse, pipelineResponse] =
-      await Promise.allSettled([
-        api.get("/experiments"),
-        api.get("/models"),
-        api.get("/predictions"),
-        api.get("/pipelines"),
-      ]);
+    const [
+      experimentResponse,
+      modelResponse,
+      predictionResponse,
+      pipelineResponse,
+    ] = await Promise.allSettled([
+      api.get("/experiments"),
+      api.get("/models"),
+      api.get("/predictions"),
+      api.get("/pipelines"),
+    ]);
 
     if (experimentResponse.status === "fulfilled") {
       setExperiments(experimentResponse.value.data.experiments || []);
@@ -376,6 +380,7 @@ export default function App() {
         return {
           id: node.id,
           type: node.type,
+          position: node.position,
           data: {
             dataset_id: node.data.dataset_id,
             target_column: node.data.target_column,
@@ -387,6 +392,7 @@ export default function App() {
         return {
           id: node.id,
           type: node.type,
+          position: node.position,
           data: {
             time_budget: Number(node.data.time_budget || 30),
           },
@@ -396,6 +402,7 @@ export default function App() {
       return {
         id: node.id,
         type: node.type,
+        position: node.position,
         data: {},
       };
     });
@@ -407,6 +414,97 @@ export default function App() {
       source: edge.source,
       target: edge.target,
     }));
+  };
+
+  const hydrateSavedNodes = (savedNodes) => {
+    return savedNodes.map((node) => {
+      if (node.type === "dataLoader") {
+        return {
+          ...node,
+          position: node.position || { x: 120, y: 80 },
+          data: {
+            dataset_id: node.data?.dataset_id || "",
+            target_column: node.data?.target_column || "",
+            datasets,
+            columns,
+            onChange: (key, value) => {
+              if (key === "dataset_id") {
+                setSelectedDatasetId(value);
+                updateNodeData(node.id, "target_column", "");
+              }
+
+              updateNodeData(node.id, key, value);
+            },
+          },
+        };
+      }
+
+      if (node.type === "automl") {
+        return {
+          ...node,
+          position: node.position || { x: 120, y: 380 },
+          data: {
+            time_budget: node.data?.time_budget || 30,
+            onChange: (key, value) => updateNodeData(node.id, key, value),
+          },
+        };
+      }
+
+      return {
+        ...node,
+        data: node.data || {},
+      };
+    });
+  };
+
+  const hydrateSavedEdges = (savedEdges) => {
+    return savedEdges.map((edge) => ({
+      ...edge,
+      animated: true,
+      style: {
+        stroke: "#64748b",
+        strokeWidth: 2,
+        strokeDasharray: "6 6",
+      },
+    }));
+  };
+
+  const loadSavedPipeline = async (graphId) => {
+    try {
+      const response = await api.get(`/pipelines/${graphId}`);
+
+      const savedNodes = response.data.nodes || [];
+      const savedEdges = response.data.edges || [];
+
+      const hydratedNodes = hydrateSavedNodes(savedNodes);
+      const hydratedEdges = hydrateSavedEdges(savedEdges);
+
+      setNodes(hydratedNodes);
+      setEdges(hydratedEdges);
+
+      const dataLoaderNode = hydratedNodes.find(
+        (node) => node.type === "dataLoader"
+      );
+
+      if (dataLoaderNode?.data?.dataset_id) {
+        setSelectedDatasetId(dataLoaderNode.data.dataset_id);
+      }
+
+      setFinalResult(null);
+      setConsoleCollapsed(false);
+
+      addLog(`Loaded saved pipeline: ${graphId}`);
+      pushToast(
+        "success",
+        "Pipeline loaded",
+        "Saved pipeline loaded onto canvas."
+      );
+    } catch (error) {
+      const message = error.response?.data?.detail || error.message;
+
+      addLog(`Pipeline load failed: ${message}`);
+      pushToast("error", "Pipeline load failed", message);
+    }
   };
 
   const connectWebSocket = (taskId) => {
@@ -452,7 +550,11 @@ export default function App() {
         setIsRunning(false);
         setConsoleCollapsed(false);
 
-        pushToast("error", "Training failed", data.error || "Celery task failed.");
+        pushToast(
+          "error",
+          "Training failed",
+          data.error || "Celery task failed."
+        );
 
         await refreshRegistry();
       }
@@ -666,6 +768,7 @@ export default function App() {
             onSelectModel={setSelectedModelId}
             onOpenModel={openModelDetails}
             onOpenExperiment={openExperimentDetails}
+            onLoadPipeline={loadSavedPipeline}
           />
         </aside>
       </div>

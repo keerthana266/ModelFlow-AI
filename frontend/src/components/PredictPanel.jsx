@@ -1,5 +1,11 @@
-import React, { useState } from "react";
-import { PlayCircle, Wand2 } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import {
+  Code2,
+  PlayCircle,
+  RefreshCcw,
+  Sparkles,
+  Wand2,
+} from "lucide-react";
 import { api } from "../api";
 
 export default function PredictPanel({
@@ -8,13 +14,69 @@ export default function PredictPanel({
   onSelectModel,
   onDone,
 }) {
-  const [inputJson, setInputJson] = useState(`{
-  "Age": 25,
-  "Fare": 50,
-  "Sex": "female"
-}`);
+  const [inputJson, setInputJson] = useState("{}");
+  const [modelDetails, setModelDetails] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
+  const [isLoadingModel, setIsLoadingModel] = useState(false);
+  const [isPredicting, setIsPredicting] = useState(false);
+
+  useEffect(() => {
+    if (!selectedModelId) {
+      setModelDetails(null);
+      setInputJson("{}");
+      setResult(null);
+      setError("");
+      return;
+    }
+
+    loadSelectedModelDetails(selectedModelId);
+  }, [selectedModelId]);
+
+  const loadSelectedModelDetails = async (modelId) => {
+    try {
+      setIsLoadingModel(true);
+      setError("");
+      setResult(null);
+
+      const response = await api.get(`/models/${modelId}`);
+      const details = response.data;
+
+      setModelDetails(details);
+      setInputJson(JSON.stringify(generateExampleInput(details), null, 2));
+    } catch (error) {
+      setError(error.response?.data?.detail || error.message);
+    } finally {
+      setIsLoadingModel(false);
+    }
+  };
+
+  const generateExampleInput = (details) => {
+    const featureColumns = details.feature_columns || [];
+    const numericalColumns = new Set(details.numerical_columns || []);
+    const categoricalColumns = new Set(details.categorical_columns || []);
+
+    const example = {};
+
+    featureColumns.forEach((column) => {
+      if (numericalColumns.has(column)) {
+        example[column] = getSmartNumericExample(column);
+      } else if (categoricalColumns.has(column)) {
+        example[column] = getSmartCategoricalExample(column);
+      } else {
+        example[column] = getFallbackExample(column);
+      }
+    });
+
+    return example;
+  };
+
+  const regenerateInput = () => {
+    if (!modelDetails) return;
+    setInputJson(JSON.stringify(generateExampleInput(modelDetails), null, 2));
+    setResult(null);
+    setError("");
+  };
 
   const runPrediction = async () => {
     try {
@@ -28,6 +90,8 @@ export default function PredictPanel({
 
       const parsed = JSON.parse(inputJson);
 
+      setIsPredicting(true);
+
       const response = await api.post(`/models/${selectedModelId}/predict`, {
         data: parsed,
       });
@@ -35,7 +99,13 @@ export default function PredictPanel({
       setResult(response.data);
       await onDone?.();
     } catch (error) {
-      setError(error.response?.data?.detail || error.message);
+      if (error instanceof SyntaxError) {
+        setError("Invalid JSON format. Please check commas, quotes, and braces.");
+      } else {
+        setError(error.response?.data?.detail || error.message);
+      }
+    } finally {
+      setIsPredicting(false);
     }
   };
 
@@ -50,7 +120,9 @@ export default function PredictPanel({
           <h2 className="text-sm font-bold text-slate-900">
             Prediction Tester
           </h2>
-          <p className="text-xs text-slate-500">Test deployed model endpoint</p>
+          <p className="text-xs text-slate-500">
+            Test model using its real schema
+          </p>
         </div>
       </div>
 
@@ -75,24 +147,102 @@ export default function PredictPanel({
           </select>
         </div>
 
+        {modelDetails && (
+          <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-wider text-emerald-700">
+                  Active Model Schema
+                </div>
+
+                <div className="mt-1 text-sm font-bold text-slate-900">
+                  {modelDetails.model_name}
+                </div>
+
+                <div className="mt-1 text-xs text-slate-600">
+                  Target:{" "}
+                  <span className="font-semibold">
+                    {modelDetails.target_column}
+                  </span>
+                  {" · "}
+                  Type:{" "}
+                  <span className="font-semibold">
+                    {modelDetails.problem_type}
+                  </span>
+                </div>
+
+                <div className="mt-1 text-xs text-slate-500">
+                  Features: {modelDetails.feature_columns?.length || 0}
+                </div>
+              </div>
+
+              <button
+                onClick={regenerateInput}
+                className="rounded-xl bg-white px-3 py-2 text-xs font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-100"
+                title="Regenerate example input"
+              >
+                <RefreshCcw size={14} />
+              </button>
+            </div>
+          </div>
+        )}
+
         <div>
-          <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-            Input JSON
-          </label>
+          <div className="mb-1 flex items-center justify-between">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+              Input JSON
+            </label>
+
+            <button
+              onClick={regenerateInput}
+              disabled={!modelDetails}
+              className="flex items-center gap-1 rounded-xl px-2 py-1 text-[11px] font-bold text-slate-500 transition hover:bg-slate-100 hover:text-emerald-600 disabled:opacity-40"
+            >
+              <Sparkles size={12} />
+              Auto-fill
+            </button>
+          </div>
 
           <textarea
             value={inputJson}
             onChange={(e) => setInputJson(e.target.value)}
-            className="soft-scroll mt-1 h-36 w-full rounded-2xl border border-slate-200 bg-slate-950 px-3 py-3 font-mono text-xs text-slate-200 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+            className="soft-scroll h-40 w-full rounded-2xl border border-slate-200 bg-slate-950 px-3 py-3 font-mono text-xs text-slate-200 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
           />
         </div>
 
+        {modelDetails?.feature_columns?.length > 0 && (
+          <details className="rounded-2xl border border-slate-200 bg-slate-50">
+            <summary className="flex cursor-pointer items-center gap-2 px-3 py-2 text-xs font-bold uppercase tracking-wider text-slate-500">
+              <Code2 size={13} />
+              Required Features
+            </summary>
+
+            <div className="soft-scroll max-h-32 overflow-auto border-t border-slate-200 p-3">
+              <div className="flex flex-wrap gap-1.5">
+                {modelDetails.feature_columns.map((feature) => (
+                  <span
+                    key={feature}
+                    className="rounded-full bg-white px-2 py-1 text-[11px] font-medium text-slate-600 shadow-sm"
+                  >
+                    {feature}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </details>
+        )}
+
         <button
           onClick={runPrediction}
-          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700"
+          disabled={isPredicting || isLoadingModel || !selectedModelId}
+          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-400"
         >
           <PlayCircle size={17} />
-          Run Prediction
+          {isPredicting
+            ? "Predicting..."
+            : isLoadingModel
+            ? "Loading model..."
+            : "Run Prediction"}
         </button>
 
         {error && (
@@ -115,4 +265,52 @@ export default function PredictPanel({
       </div>
     </section>
   );
+}
+
+function getSmartNumericExample(column) {
+  const key = column.toLowerCase();
+
+  if (key.includes("age")) return 30;
+  if (key.includes("area") || key.includes("sqft") || key.includes("size")) return 1200;
+  if (key.includes("bedroom") || key.includes("bed")) return 3;
+  if (key.includes("bathroom") || key.includes("bath")) return 2;
+  if (key.includes("fare")) return 50;
+  if (key.includes("salary") || key.includes("income")) return 50000;
+  if (key.includes("year")) return 2024;
+  if (key.includes("price")) return 100000;
+  if (key.includes("distance")) return 10;
+  if (key.includes("rating")) return 4.5;
+  if (key.includes("count") || key.includes("quantity")) return 1;
+
+  return 0;
+}
+
+function getSmartCategoricalExample(column) {
+  const key = column.toLowerCase();
+
+  if (key.includes("sex") || key.includes("gender")) return "female";
+  if (key.includes("location") || key.includes("city")) return "Urban";
+  if (key.includes("embarked")) return "S";
+  if (key.includes("class")) return "First";
+  if (key.includes("type")) return "standard";
+  if (key.includes("category")) return "A";
+  if (key.includes("status")) return "active";
+  if (key.includes("yes") || key.includes("no")) return "yes";
+
+  return "sample";
+}
+
+function getFallbackExample(column) {
+  const key = column.toLowerCase();
+
+  if (
+    key.includes("id") ||
+    key.includes("number") ||
+    key.includes("amount") ||
+    key.includes("score")
+  ) {
+    return 1;
+  }
+
+  return "sample";
 }

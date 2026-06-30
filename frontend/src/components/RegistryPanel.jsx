@@ -24,6 +24,7 @@ export default function RegistryPanel({
   onSelectModel,
   onOpenModel,
   onOpenExperiment,
+  onLoadPipeline,
 }) {
   const [activeTab, setActiveTab] = useState("experiments");
 
@@ -80,6 +81,7 @@ export default function RegistryPanel({
                   <Icon size={13} />
                   {tab.label}
                 </span>
+
                 <span
                   className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
                     active ? "bg-white/15 text-white" : "bg-white text-slate-500"
@@ -108,12 +110,14 @@ export default function RegistryPanel({
                   <div className="text-sm font-black capitalize text-slate-900">
                     {exp.problem_type} · {exp.target_column}
                   </div>
+
                   <div className="mt-1 text-xs text-slate-500">
                     {exp.main_metric}:{" "}
                     <span className="font-bold text-slate-800">
                       {exp.best_score}
                     </span>
                   </div>
+
                   <div className="mt-2 truncate text-[10px] text-slate-400">
                     {exp.experiment_id}
                   </div>
@@ -140,12 +144,14 @@ export default function RegistryPanel({
                     <div className="text-sm font-black text-slate-900">
                       {model.model_name}
                     </div>
+
                     <div className="mt-1 text-xs text-slate-500">
                       {model.main_metric}:{" "}
                       <span className="font-bold text-slate-800">
                         {model.score}
                       </span>
                     </div>
+
                     <div className="mt-2 truncate text-[10px] text-slate-400">
                       {model.model_id}
                     </div>
@@ -176,6 +182,7 @@ export default function RegistryPanel({
                   <div className="truncate text-xs font-bold text-slate-700">
                     {log.model_id}
                   </div>
+
                   <div className="mt-2 rounded-xl bg-white p-2 text-xs text-slate-600">
                     {JSON.stringify(log.prediction)}
                   </div>
@@ -191,18 +198,32 @@ export default function RegistryPanel({
               <Empty />
             ) : (
               pipelines.map((pipeline) => (
-                <div
+                <button
                   key={pipeline.graph_id}
-                  className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                  onClick={() => onLoadPipeline(pipeline.graph_id)}
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left transition hover:border-violet-300 hover:bg-violet-50"
                 >
-                  <div className="text-sm font-black text-slate-900">
-                    {pipeline.nodes?.length || 0} nodes ·{" "}
-                    {pipeline.edges?.length || 0} edges
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-black text-slate-900">
+                        Saved Pipeline
+                      </div>
+
+                      <div className="mt-1 text-xs text-slate-500">
+                        {pipeline.nodes?.length || 0} nodes ·{" "}
+                        {pipeline.edges?.length || 0} edges
+                      </div>
+
+                      <div className="mt-2 truncate text-[10px] text-slate-400">
+                        {pipeline.graph_id}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl bg-violet-100 px-3 py-2 text-xs font-bold text-violet-700">
+                      Load
+                    </div>
                   </div>
-                  <div className="mt-2 truncate text-[10px] text-slate-400">
-                    {pipeline.graph_id}
-                  </div>
-                </div>
+                </button>
               ))
             )}
           </div>
