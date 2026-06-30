@@ -1,6 +1,6 @@
 # app/schemas/requests.py
 
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Union , Optional
 
 from pydantic import BaseModel, Field
 
@@ -30,3 +30,9 @@ class PipelineEdge(BaseModel):
 class PipelineExecutionRequest(BaseModel):
     nodes: List[PipelineNode]
     edges: List[PipelineEdge]
+
+class DriftCheckRequest(BaseModel):
+    model_id: str
+    current_dataset_id: Optional[str] = None
+    current_data: Optional[List[Dict[str, Any]]] = None
+    max_rows: int = Field(default=1000, ge=2, le=10000)

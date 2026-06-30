@@ -18,3 +18,5 @@ flaml[automl]
 shap
 
 mlflow
+
+evidently==0.6.7

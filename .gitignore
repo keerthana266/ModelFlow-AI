@@ -7,7 +7,7 @@ venv/
 .env/
 
 # Storage (VERY IMPORTANT)
-backend/storage/datasets/
+backend/storage
 backend/storage/models/
 backend/storage/experiments/
 

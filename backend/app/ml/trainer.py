@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from pathlib import Path
+from app.ml.drift import save_reference_data
 
 import joblib
 import mlflow
@@ -406,6 +407,7 @@ def train_automl(
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
     model_path = MODEL_DIR / f"{model_id}.joblib"
+    reference_data_path = save_reference_data(model_id, X)
 
     model_package = {
         "model_id": model_id,
@@ -418,6 +420,7 @@ def train_automl(
         "pipeline": final_pipeline,
         "metrics": metrics,
         "time_budget": time_budget,
+        "reference_data_path": str(reference_data_path),
         "created_at": utc_now_iso(),
     }
 

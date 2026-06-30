@@ -2,6 +2,8 @@
 
 import asyncio
 from typing import Optional
+from pathlib import Path
+from fastapi.responses import FileResponse
 
 from celery.result import AsyncResult
 from fastapi import (
@@ -25,6 +27,8 @@ from app.ml.predictor import make_prediction
 from app.ml.profiler import profile_csv_dataset
 from app.ml.trainer import train_automl
 from app.ml.transpiler import execute_pipeline_graph
+from app.schemas.requests import DriftCheckRequest
+from app.ml.drift import run_drift_check
 from app.schemas.requests import (
     PredictRequest,
     PipelineExecutionRequest,
@@ -599,6 +603,7 @@ def get_saved_pipeline(
 
 @app.websocket("/ws/task/{task_id}")
 async def task_status_websocket(
+
     websocket: WebSocket,
     task_id: str,
 ):
@@ -640,3 +645,135 @@ async def task_status_websocket(
 
     except WebSocketDisconnect:
         print(f"Client disconnected from task {task_id} stream.")
+
+@app.post("/monitoring/drift")
+def create_drift_report(
+    request: DriftCheckRequest,
+    db: Session = Depends(get_db),
+):
+    model_record = (
+        db.query(models.TrainedModel)
+        .filter(models.TrainedModel.model_id == request.model_id)
+        .first()
+    )
+
+    if not model_record:
+        raise HTTPException(status_code=404, detail="Model not found.")
+
+    try:
+        result = run_drift_check(
+            model_record=model_record,
+            current_dataset_id=request.current_dataset_id,
+            current_data=request.current_data,
+            max_rows=request.max_rows,
+        )
+
+        drift_record = models.DriftReport(
+            report_id=result["report_id"],
+            model_id=result["model_id"],
+            experiment_id=result["experiment_id"],
+            current_dataset_id=result["current_dataset_id"],
+            drift_detected=result["drift_detected"],
+            drift_score=result["drift_score"],
+            drifted_columns=result["drifted_columns"],
+            total_columns=result["total_columns"],
+            report_path=result["report_path"],
+            summary=result["summary"],
+        )
+
+        db.merge(drift_record)
+        db.commit()
+
+        clean_result = dict(result)
+        clean_result.pop("report_path", None)
+
+        return clean_result
+
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.get("/monitoring/drift")
+def list_drift_reports(
+    limit: int = 20,
+    db: Session = Depends(get_db),
+):
+    records = (
+        db.query(models.DriftReport)
+        .order_by(models.DriftReport.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "drift_reports": [
+            {
+                "report_id": record.report_id,
+                "model_id": record.model_id,
+                "experiment_id": record.experiment_id,
+                "current_dataset_id": record.current_dataset_id,
+                "drift_detected": record.drift_detected,
+                "drift_score": record.drift_score,
+                "drifted_columns": record.drifted_columns,
+                "total_columns": record.total_columns,
+                "html_report_url": f"/monitoring/drift/{record.report_id}/html",
+                "created_at": record.created_at,
+            }
+            for record in records
+        ]
+    }
+
+
+@app.get("/monitoring/drift/{report_id}")
+def get_drift_report(
+    report_id: str,
+    db: Session = Depends(get_db),
+):
+    record = (
+        db.query(models.DriftReport)
+        .filter(models.DriftReport.report_id == report_id)
+        .first()
+    )
+
+    if not record:
+        raise HTTPException(status_code=404, detail="Drift report not found.")
+
+    return {
+        "report_id": record.report_id,
+        "model_id": record.model_id,
+        "experiment_id": record.experiment_id,
+        "current_dataset_id": record.current_dataset_id,
+        "drift_detected": record.drift_detected,
+        "drift_score": record.drift_score,
+        "drifted_columns": record.drifted_columns,
+        "total_columns": record.total_columns,
+        "summary": record.summary,
+        "html_report_url": f"/monitoring/drift/{record.report_id}/html",
+        "created_at": record.created_at,
+    }
+
+
+@app.get("/monitoring/drift/{report_id}/html")
+def get_drift_report_html(
+    report_id: str,
+    db: Session = Depends(get_db),
+):
+    record = (
+        db.query(models.DriftReport)
+        .filter(models.DriftReport.report_id == report_id)
+        .first()
+    )
+
+    if not record:
+        raise HTTPException(status_code=404, detail="Drift report not found.")
+
+    report_path = Path(record.report_path)
+
+    if not report_path.exists():
+        raise HTTPException(status_code=404, detail="Drift HTML file not found.")
+
+    return FileResponse(
+        path=str(report_path),
+        media_type="text/html",
+        filename=f"{report_id}.html",
+    )

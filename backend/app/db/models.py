@@ -1,5 +1,16 @@
 # app/db/models.py
 
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    Integer,
+    JSON,
+    String,
+    Text,
+)
+from datetime import datetime
 import uuid
 
 from sqlalchemy import Column, DateTime, Float, Integer, JSON, String
@@ -83,3 +94,22 @@ class PipelineGraph(Base):
     nodes = Column(JSON, nullable=False)
     edges = Column(JSON, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DriftReport(Base):
+    __tablename__ = "drift_reports"
+
+    report_id = Column(String, primary_key=True, index=True)
+    model_id = Column(String, index=True, nullable=False)
+    experiment_id = Column(String, index=True, nullable=True)
+    current_dataset_id = Column(String, index=True, nullable=True)
+
+    drift_detected = Column(Boolean, default=False)
+    drift_score = Column(Float, nullable=True)
+    drifted_columns = Column(Integer, default=0)
+    total_columns = Column(Integer, default=0)
+
+    report_path = Column(Text, nullable=False)
+    summary = Column(JSON, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)

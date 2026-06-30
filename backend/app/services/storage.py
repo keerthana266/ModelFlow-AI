@@ -12,6 +12,8 @@ STORAGE_DIR = BASE_DIR / "storage"
 DATASET_DIR = STORAGE_DIR / "datasets"
 MODEL_DIR = STORAGE_DIR / "models"
 EXPERIMENT_DIR = STORAGE_DIR / "experiments"
+DRIFT_REPORT_DIR = STORAGE_DIR / "drift_reports"
+DRIFT_REFERENCE_DIR = STORAGE_DIR / "drift_reference"
 
 
 def utc_now_iso() -> str:
@@ -22,6 +24,8 @@ def create_storage_folders() -> None:
     DATASET_DIR.mkdir(parents=True, exist_ok=True)
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     EXPERIMENT_DIR.mkdir(parents=True, exist_ok=True)
+    DRIFT_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    DRIFT_REFERENCE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def generate_id(prefix: str) -> str:
