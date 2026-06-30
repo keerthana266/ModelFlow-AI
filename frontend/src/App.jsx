@@ -27,6 +27,7 @@ import ResultsDashboard from "./components/ResultsDashboard";
 import DetailsModal from "./components/DetailsModal";
 import ExecutionConsole from "./components/ExecutionConsole";
 import ToastStack from "./components/ToastStack";
+import DriftPanel from "./components/DriftPanel";
 
 const nodeTypes = {
   dataLoader: DataLoaderNode,
@@ -702,6 +703,7 @@ export default function App() {
             onSelectModel={setSelectedModelId}
             onDone={refreshRegistry}
           />
+          <DriftPanel models={models} datasets={datasets} />
         </aside>
 
         <main className="relative flex flex-grow flex-col overflow-hidden">
