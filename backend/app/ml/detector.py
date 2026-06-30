@@ -1,18 +1,10 @@
+# app/ml/detector.py
+
 import pandas as pd
 from pandas.api.types import is_bool_dtype, is_numeric_dtype
 
 
 def detect_problem_type(y: pd.Series) -> str:
-    """
-    Detect whether the target column is classification or regression.
-
-    Sprint 1 logic:
-    - Text/category/bool target = classification
-    - Numeric target with 2 unique values = classification
-    - Numeric target with few repeated integer labels = classification
-    - Continuous numeric target = regression
-    """
-
     y = y.dropna()
 
     if y.empty:

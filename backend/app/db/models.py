@@ -1,10 +1,30 @@
+# app/db/models.py
+
 import uuid
 
-from sqlalchemy import Column, String, Float, DateTime, Integer, JSON
+from sqlalchemy import Column, DateTime, Float, Integer, JSON, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
 from app.db.database import Base
+
+
+class DatasetRecord(Base):
+    __tablename__ = "datasets"
+
+    dataset_id = Column(String, primary_key=True, index=True)
+    original_filename = Column(String, nullable=False)
+    file_path = Column(String, nullable=False)
+
+    rows = Column(Integer, nullable=False)
+    columns = Column(Integer, nullable=False)
+    column_names = Column(JSON, nullable=False)
+    dtypes = Column(JSON, nullable=True)
+    missing_values = Column(JSON, nullable=True)
+    unique_values = Column(JSON, nullable=True)
+    duplicate_rows = Column(Integer, nullable=True)
+
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class ExperimentResult(Base):
@@ -41,6 +61,18 @@ class TrainedModel(Base):
     categorical_columns = Column(JSON, nullable=True)
 
     model_path = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class PredictionLog(Base):
+    __tablename__ = "prediction_logs"
+
+    prediction_id = Column(String, primary_key=True, index=True)
+    model_id = Column(String, index=True, nullable=False)
+
+    input_data = Column(JSON, nullable=False)
+    prediction = Column(JSON, nullable=False)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

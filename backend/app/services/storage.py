@@ -1,5 +1,6 @@
+# app/services/storage.py
+
 import json
-import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -27,7 +28,7 @@ def generate_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:12]}"
 
 
-def save_uploaded_dataset(file) -> dict:
+def save_uploaded_dataset(file, max_upload_mb: int = 50) -> dict:
     create_storage_folders()
 
     original_filename = file.filename or "uploaded.csv"
@@ -39,8 +40,30 @@ def save_uploaded_dataset(file) -> dict:
     dataset_id = generate_id("dataset")
     saved_path = DATASET_DIR / f"{dataset_id}.csv"
 
-    with saved_path.open("wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    max_bytes = max_upload_mb * 1024 * 1024
+    bytes_written = 0
+
+    try:
+        with saved_path.open("wb") as buffer:
+            while True:
+                chunk = file.file.read(1024 * 1024)
+
+                if not chunk:
+                    break
+
+                bytes_written += len(chunk)
+
+                if bytes_written > max_bytes:
+                    buffer.close()
+                    saved_path.unlink(missing_ok=True)
+                    raise ValueError(
+                        f"File is too large. Max allowed size is {max_upload_mb} MB."
+                    )
+
+                buffer.write(chunk)
+
+    finally:
+        file.file.close()
 
     return {
         "dataset_id": dataset_id,
@@ -57,6 +80,11 @@ def get_dataset_path(dataset_id: str) -> Path:
         raise FileNotFoundError(f"Dataset '{dataset_id}' was not found.")
 
     return dataset_path
+
+
+def delete_dataset_file(dataset_id: str) -> None:
+    dataset_path = DATASET_DIR / f"{dataset_id}.csv"
+    dataset_path.unlink(missing_ok=True)
 
 
 def get_model_path(model_id: str) -> Path:

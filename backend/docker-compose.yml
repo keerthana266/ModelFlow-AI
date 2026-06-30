@@ -1,0 +1,61 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: automl-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: automl_forge
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - automl_postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:latest
+    container_name: automl-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  backend:
+    build: .
+    container_name: automl-backend
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/automl_forge
+      REDIS_BROKER_URL: redis://redis:6379/0
+      REDIS_BACKEND_URL: redis://redis:6379/1
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      MAX_UPLOAD_MB: 50
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+
+  worker:
+    build: .
+    container_name: automl-worker
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+      - backend
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/automl_forge
+      REDIS_BROKER_URL: redis://redis:6379/0
+      REDIS_BACKEND_URL: redis://redis:6379/1
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      MAX_UPLOAD_MB: 50
+    command: celery -A app.worker.celery_app worker --loglevel=info
+    volumes:
+      - .:/app
+
+volumes:
+  automl_postgres_data:

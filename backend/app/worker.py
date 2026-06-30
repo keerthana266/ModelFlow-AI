@@ -1,11 +1,15 @@
 # app/worker.py
+
 from celery import Celery
+
+from app.core.config import settings
+
 
 celery_app = Celery(
     "automl_worker",
-    broker="redis://localhost:6379/0",
-    backend="redis://localhost:6379/1",
-    include=["app.ml.trainer"]  
+    broker=settings.REDIS_BROKER_URL,
+    backend=settings.REDIS_BACKEND_URL,
+    include=["app.ml.trainer"],
 )
 
 celery_app.conf.update(
@@ -14,4 +18,5 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    task_track_started=True,
 )

@@ -7,21 +7,10 @@ from app.services.storage import get_dataset_path
 
 
 def normalize_node_type(node_type: str) -> str:
-    """
-    Converts frontend node type names into backend-friendly names.
-
-    Examples:
-    - "dataLoader" -> "dataloader"
-    - "DataLoader" -> "dataloader"
-    - "autoML" -> "automl"
-    """
     return node_type.replace("_", "").replace("-", "").lower()
 
 
 def validate_graph(nodes: List[dict], edges: List[dict]) -> None:
-    """
-    Basic validation for React Flow graph structure.
-    """
     if not nodes:
         raise ValueError("Pipeline must contain at least one node.")
 
@@ -42,15 +31,6 @@ def validate_graph(nodes: List[dict], edges: List[dict]) -> None:
 
 
 def find_root_node_id(nodes: List[dict], edges: List[dict]) -> str:
-    """
-    Finds the starting node of the pipeline.
-
-    Root node = a node that is not the target of any edge.
-    Example:
-        DataLoader -> AutoML
-
-    Here DataLoader is the root node.
-    """
     target_nodes = {edge["target"] for edge in edges}
     root_nodes = [node["id"] for node in nodes if node["id"] not in target_nodes]
 
@@ -67,14 +47,6 @@ def find_root_node_id(nodes: List[dict], edges: List[dict]) -> str:
 
 
 def find_next_node_id(current_node_id: str, edges: List[dict]) -> Optional[str]:
-    """
-    Finds the next node connected from the current node.
-
-    Current version supports a linear pipeline only:
-        DataLoader -> AutoML -> Future Node
-
-    It does not yet support branching.
-    """
     outgoing_edges = [edge for edge in edges if edge["source"] == current_node_id]
 
     if not outgoing_edges:
@@ -90,10 +62,6 @@ def find_next_node_id(current_node_id: str, edges: List[dict]) -> Optional[str]:
 
 
 def parse_time_budget(value: Any) -> int:
-    """
-    Safely parses AutoML time budget from frontend node data.
-    Restricts value between 10 and 300 seconds.
-    """
     try:
         time_budget = int(value)
     except (TypeError, ValueError):
@@ -103,25 +71,6 @@ def parse_time_budget(value: Any) -> int:
 
 
 def execute_pipeline_graph(nodes: List[dict], edges: List[dict]) -> dict:
-    """
-    Converts a React Flow JSON graph into backend ML execution.
-
-    Supported current pipeline:
-        DataLoader Node -> AutoML Node
-
-    DataLoader node requires:
-        data.dataset_id
-        data.target_column
-
-    AutoML node accepts:
-        data.time_budget
-
-    Returns:
-        execution log
-        final pipeline state
-        Celery task_id if AutoML training is started
-    """
-
     validate_graph(nodes, edges)
 
     node_map = {node["id"]: node for node in nodes}
@@ -193,9 +142,7 @@ def execute_pipeline_graph(nodes: List[dict], edges: List[dict]) -> dict:
                 execution_log.append(f"-> Background Celery task queued: {task.id}")
 
             else:
-                execution_log.append(
-                    f"-> Warning: Unknown node type '{raw_node_type}' ignored."
-                )
+                execution_log.append(f"-> Warning: Unknown node type '{raw_node_type}' ignored.")
 
         except Exception as error:
             execution_log.append(f"-> ERROR at node {current_node_id}: {str(error)}")
