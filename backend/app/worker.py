@@ -5,7 +5,7 @@ celery_app = Celery(
     "automl_worker",
     broker="redis://localhost:6379/0",
     backend="redis://localhost:6379/1",
-    include=["app.ml.trainer"]  # <--- THIS IS THE MISSING PIECE
+    include=["app.ml.trainer"]  
 )
 
 celery_app.conf.update(
