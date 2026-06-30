@@ -7,6 +7,7 @@ import pandas as pd
 import shap
 from flaml import AutoML
 
+
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -23,6 +24,8 @@ from app.ml.detector import detect_problem_type
 from app.ml.preprocessor import build_preprocessor, get_column_groups
 from app.services.storage import MODEL_DIR, generate_id, save_experiment_result
 from app.worker import celery_app
+from app.db.database import SessionLocal
+from app.db import models
 
 
 def utc_now_iso() -> str:
@@ -76,9 +79,55 @@ def validate_training_data(df: pd.DataFrame, target_column: str) -> None:
     if df.shape[1] < 2:
         raise ValueError("Dataset must contain at least one feature column and one target column.")
 
+def save_training_result_to_database(result: dict, model_path: str) -> None:
+    db = SessionLocal()
+
+    try:
+        best_model = result["leaderboard"][0]
+
+        experiment_record = models.ExperimentResult(
+            experiment_id=result["experiment_id"],
+            problem_type=result["problem_type"],
+            target_column=result["target_column"],
+            rows_used=result["rows_used"],
+            best_model_id=result["best_model_id"],
+            main_metric=result["main_metric"],
+            best_score=result["best_score"],
+            feature_importance=result["feature_importance"],
+            leaderboard=result["leaderboard"],
+        )
+
+        model_record = models.TrainedModel(
+            model_id=result["best_model_id"],
+            experiment_id=result["experiment_id"],
+            model_name=best_model["model_name"],
+            problem_type=result["problem_type"],
+            target_column=result["target_column"],
+            main_metric=result["main_metric"],
+            score=result["best_score"],
+            metrics=best_model["metrics"],
+            feature_columns=result["feature_columns"],
+            numerical_columns=result["numerical_columns"],
+            categorical_columns=result["categorical_columns"],
+            model_path=model_path,
+        )
+
+        db.add(experiment_record)
+        db.add(model_record)
+        db.commit()
+
+    except Exception as error:
+        db.rollback()
+        print(f"DATABASE SAVE FAILED: {error}")
+
+    finally:
+        db.close()
+
+
 
 @celery_app.task(bind=True, name="train_automl_task")
-def train_automl(self, dataset_path_str: str, target_column: str) -> dict:
+def train_automl(self, dataset_path_str: str, target_column: str, time_budget: int = 30) -> dict:
+    time_budget = max(10, min(int(time_budget), 300))
     self.update_state(state='PROGRESS', meta={'message': 'Loading and validating dataset...'})
     dataset_path = Path(dataset_path_str)
     
@@ -110,7 +159,7 @@ def train_automl(self, dataset_path_str: str, target_column: str) -> dict:
     self.update_state(state='PROGRESS', meta={'message': 'FLAML is actively optimizing models. Please wait...'})
     automl = AutoML()
     automl_settings = {
-        "time_budget": 30,  # 30 seconds limit
+        "time_budget": time_budget,  # 30 seconds limit
         "metric": "f1" if problem_type == "classification" else "r2",
         "task": problem_type,
         "verbose": 0,
@@ -178,6 +227,7 @@ def train_automl(self, dataset_path_str: str, target_column: str) -> dict:
         "categorical_columns": column_groups["categorical_columns"],
         "pipeline": final_pipeline,
         "metrics": metrics,
+        "time_budget": time_budget,
         "created_at": utc_now_iso(),
     }
 
@@ -206,11 +256,15 @@ def train_automl(self, dataset_path_str: str, target_column: str) -> dict:
         "numerical_columns": column_groups["numerical_columns"],
         "categorical_columns": column_groups["categorical_columns"],
         "main_metric": main_metric,
+        "best_score": score,
         "best_model_id": model_id,
         "feature_importance": feature_importance,
         "leaderboard": leaderboard,
+        "time_budget": time_budget,
         "created_at": utc_now_iso(),
     }
     
     save_experiment_result(result["experiment_id"], result)
+    save_training_result_to_database(result, str(model_path))
+
     return result
