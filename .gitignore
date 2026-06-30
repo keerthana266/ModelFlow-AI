@@ -16,3 +16,4 @@ backend/storage/experiments/
 Thumbs.db
 backend/.env
 backend/alembic/env.py
+frontend/.env
