@@ -17,7 +17,7 @@ from app.services.storage import (
 )
 from app.worker import celery_app
 from sqlalchemy.sql import text
-from app.db.database import engine
+from app.db.database import engine, Base
 
 # Import the production database layers
 from app.db.database import get_db
@@ -42,20 +42,20 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event():
-    # 1. Create local storage folders for your datasets
     create_storage_folders()
-    
-    # 2. Verify PostgreSQL Connection Connectivity
+
+    print("Creating database tables if they do not exist...")
+    Base.metadata.create_all(bind=engine)
+
     print("Connecting to PostgreSQL database...")
     try:
-        # Establish a temporary connection and run a dummy query
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
         print("DATABASE STATUS: Successfully connected to PostgreSQL!")
     except Exception as e:
         print("DATABASE STATUS: Connection FAILED!")
         print(f"Error Details: {e}")
-        print(" Please verify that your PostgreSQL server is running and your .env URL is correct.")
+        print("Please verify that your PostgreSQL server is running and your .env URL is correct.")
     
 
 @app.get("/")
@@ -91,7 +91,7 @@ def get_dataset_profile(dataset_id: str):
 
         return {
             "dataset_id": dataset_id,
-            "**profile": profile,
+            "profile": profile,
         }
     except Exception as error:
         raise HTTPException(status_code=404, detail=str(error))
@@ -102,9 +102,10 @@ def start_experiment(request: TrainRequest):
         dataset_path = get_dataset_path(request.dataset_id)
 
         task = train_automl.delay(
-            dataset_path_str=str(dataset_path),
-            target_column=request.target_column,
-        )
+               dataset_path_str=str(dataset_path),
+               target_column=request.target_column,
+               time_budget=request.time_budget,
+)
 
         return {
             "message": "Experiment queued successfully. Polling required.",
@@ -180,8 +181,59 @@ def get_experiment_details(experiment_id: str, db: Session = Depends(get_db)):
     except Exception as error:
         raise HTTPException(status_code=404, detail=str(error))
 
-@app.post("/models/{model_id}/predict")
-def predict_with_model(model_id: str, request: PredictRequest):
+@app.get("/models")
+def list_models(db: Session = Depends(get_db)):
+    models_list = (
+        db.query(models.TrainedModel)
+        .order_by(models.TrainedModel.created_at.desc())
+        .all()
+    )
+
+    return {
+        "count": len(models_list),
+        "models": [
+            {
+                "model_id": model.model_id,
+                "experiment_id": model.experiment_id,
+                "model_name": model.model_name,
+                "problem_type": model.problem_type,
+                "target_column": model.target_column,
+                "main_metric": model.main_metric,
+                "score": model.score,
+                "metrics": model.metrics,
+                "created_at": model.created_at,
+            }
+            for model in models_list
+        ],
+    }
+
+
+@app.get("/models/{model_id}")
+def get_model_details(model_id: str, db: Session = Depends(get_db)):
+    model = (
+        db.query(models.TrainedModel)
+        .filter(models.TrainedModel.model_id == model_id)
+        .first()
+    )
+
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found.")
+
+    return {
+        "model_id": model.model_id,
+        "experiment_id": model.experiment_id,
+        "model_name": model.model_name,
+        "problem_type": model.problem_type,
+        "target_column": model.target_column,
+        "main_metric": model.main_metric,
+        "score": model.score,
+        "metrics": model.metrics,
+        "feature_columns": model.feature_columns,
+        "numerical_columns": model.numerical_columns,
+        "categorical_columns": model.categorical_columns,
+        "model_path": model.model_path,
+        "created_at": model.created_at,
+    }
     try:
         return make_prediction(
             model_id=model_id,
