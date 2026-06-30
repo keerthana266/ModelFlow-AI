@@ -1,47 +1,57 @@
 import React from "react";
 import { Handle, Position } from "reactflow";
-import { Database } from "lucide-react";
+import { Database, Table2 } from "lucide-react";
 
 export default function DataLoaderNode({ data }) {
   return (
-    <div className="bg-white border-2 border-blue-300 rounded-lg shadow-md w-72 overflow-hidden">
-      <div className="bg-blue-50 px-4 py-2 border-b border-blue-100 flex items-center gap-2">
-        <Database size={16} className="text-blue-600" />
-        <span className="font-bold text-sm text-slate-800">Data Loader</span>
+    <div className="w-80 overflow-hidden rounded-2xl border border-blue-200 bg-white shadow-[0_12px_35px_rgba(37,99,235,0.14)]">
+      <div className="flex items-center justify-between border-b border-blue-100 bg-gradient-to-r from-blue-50 to-sky-50 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <div className="grid h-8 w-8 place-items-center rounded-xl bg-blue-600 text-white">
+            <Database size={16} />
+          </div>
+
+          <div>
+            <div className="text-sm font-bold text-slate-900">Data Loader</div>
+            <div className="text-[11px] text-slate-500">CSV source node</div>
+          </div>
+        </div>
+
+        <Table2 size={16} className="text-blue-500" />
       </div>
 
-      <div className="p-4 flex flex-col gap-3">
+      <div className="space-y-4 p-4">
         <div>
-          <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+          <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
             Dataset
           </label>
 
           <select
-            className="nodrag w-full mt-1 px-2 py-1 border border-slate-300 rounded-md text-sm focus:outline-blue-500 bg-white"
+            className="nodrag mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
             value={data.dataset_id || ""}
             onChange={(e) => data.onChange("dataset_id", e.target.value)}
           >
             <option value="">Select dataset</option>
             {(data.datasets || []).map((dataset) => (
               <option key={dataset.dataset_id} value={dataset.dataset_id}>
-                {dataset.original_filename} ({dataset.rows} rows)
+                {dataset.original_filename} · {dataset.rows} rows
               </option>
             ))}
           </select>
         </div>
 
         <div>
-          <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-            Target Column
+          <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            Prediction Target
           </label>
 
           <select
-            className="nodrag w-full mt-1 px-2 py-1 border border-slate-300 rounded-md text-sm focus:outline-blue-500 bg-white"
+            className="nodrag mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
             value={data.target_column || ""}
             onChange={(e) => data.onChange("target_column", e.target.value)}
             disabled={!data.dataset_id}
           >
-            <option value="">Select target</option>
+            <option value="">Select target column</option>
             {(data.columns || []).map((column) => (
               <option key={column} value={column}>
                 {column}
@@ -50,15 +60,19 @@ export default function DataLoaderNode({ data }) {
           </select>
         </div>
 
-        <div className="text-[11px] text-slate-400 break-all">
-          {data.dataset_id ? `ID: ${data.dataset_id}` : "Upload/select dataset first"}
+        <div className="rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
+          {data.dataset_id ? (
+            <span className="break-all">Dataset ID: {data.dataset_id}</span>
+          ) : (
+            "Upload a dataset from the left panel first."
+          )}
         </div>
       </div>
 
       <Handle
         type="source"
         position={Position.Bottom}
-        className="w-3 h-3 bg-blue-500 border-2 border-white"
+        className="!h-3 !w-3 !border-2 !border-white !bg-blue-600"
       />
     </div>
   );

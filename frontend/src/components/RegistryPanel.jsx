@@ -1,5 +1,19 @@
-import React from "react";
-import { Activity, Brain, Clock3, DatabaseZap, RefreshCcw } from "lucide-react";
+import React, { useState } from "react";
+import {
+  Activity,
+  Brain,
+  Clock3,
+  DatabaseZap,
+  RefreshCcw,
+  Workflow,
+} from "lucide-react";
+
+const tabs = [
+  { id: "experiments", label: "Experiments", icon: Activity },
+  { id: "models", label: "Models", icon: Brain },
+  { id: "predictions", label: "Predictions", icon: Clock3 },
+  { id: "pipelines", label: "Pipelines", icon: Workflow },
+];
 
 export default function RegistryPanel({
   experiments,
@@ -8,136 +22,200 @@ export default function RegistryPanel({
   pipelines,
   onRefresh,
   onSelectModel,
+  onOpenModel,
+  onOpenExperiment,
 }) {
+  const [activeTab, setActiveTab] = useState("experiments");
+
+  const counts = {
+    experiments: experiments.length,
+    models: models.length,
+    predictions: predictions.length,
+    pipelines: pipelines.length,
+  };
+
   return (
-    <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-      <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+    <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-4">
         <div className="flex items-center gap-2">
-          <DatabaseZap size={17} className="text-indigo-600" />
-          <h2 className="font-bold text-sm text-slate-800">Backend Registry</h2>
+          <div className="grid h-9 w-9 place-items-center rounded-2xl bg-indigo-50 text-indigo-600">
+            <DatabaseZap size={17} />
+          </div>
+
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">
+              Platform Registry
+            </h2>
+            <p className="text-xs text-slate-500">
+              Browse platform artifacts
+            </p>
+          </div>
         </div>
 
         <button
           onClick={onRefresh}
-          className="text-xs flex items-center gap-1 text-slate-500 hover:text-indigo-600"
+          className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-100 hover:text-indigo-600"
         >
-          <RefreshCcw size={13} /> Refresh
+          <RefreshCcw size={15} />
         </button>
       </div>
 
-      <div className="p-4 flex flex-col gap-5 max-h-[calc(100vh-180px)] overflow-auto">
-        <section>
-          <h3 className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-1">
-            <Activity size={13} /> Experiments
-          </h3>
+      <div className="grid grid-cols-2 gap-2 border-b border-slate-100 p-3">
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          const active = activeTab === tab.id;
 
-          {experiments.length === 0 ? (
-            <Empty />
-          ) : (
-            experiments.slice(0, 5).map((exp) => (
-              <div
-                key={exp.experiment_id}
-                className="border border-slate-200 rounded-lg p-2 mb-2 text-xs"
-              >
-                <div className="font-semibold text-slate-700">
-                  {exp.problem_type} · {exp.target_column}
-                </div>
-                <div className="text-slate-500">
-                  {exp.main_metric}: {exp.best_score}
-                </div>
-                <div className="text-[10px] text-slate-400 truncate">
-                  {exp.experiment_id}
-                </div>
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`rounded-2xl px-3 py-2 text-left transition ${
+                active
+                  ? "bg-slate-950 text-white"
+                  : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2 text-xs font-bold">
+                  <Icon size={13} />
+                  {tab.label}
+                </span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                    active ? "bg-white/15 text-white" : "bg-white text-slate-500"
+                  }`}
+                >
+                  {counts[tab.id]}
+                </span>
               </div>
-            ))
-          )}
-        </section>
-
-        <section>
-          <h3 className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-1">
-            <Brain size={13} /> Models
-          </h3>
-
-          {models.length === 0 ? (
-            <Empty />
-          ) : (
-            models.slice(0, 5).map((model) => (
-              <button
-                key={model.model_id}
-                onClick={() => onSelectModel(model.model_id)}
-                className="w-full text-left border border-slate-200 rounded-lg p-2 mb-2 text-xs hover:bg-indigo-50 hover:border-indigo-300"
-              >
-                <div className="font-semibold text-slate-700">
-                  {model.model_name}
-                </div>
-                <div className="text-slate-500">
-                  {model.main_metric}: {model.score}
-                </div>
-                <div className="text-[10px] text-slate-400 truncate">
-                  {model.model_id}
-                </div>
-              </button>
-            ))
-          )}
-        </section>
-
-        <section>
-          <h3 className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-1">
-            <Clock3 size={13} /> Prediction Logs
-          </h3>
-
-          {predictions.length === 0 ? (
-            <Empty />
-          ) : (
-            predictions.slice(0, 5).map((log) => (
-              <div
-                key={log.prediction_id}
-                className="border border-slate-200 rounded-lg p-2 mb-2 text-xs"
-              >
-                <div className="font-semibold text-slate-700 truncate">
-                  {log.model_id}
-                </div>
-                <div className="text-slate-500 truncate">
-                  Prediction: {JSON.stringify(log.prediction)}
-                </div>
-              </div>
-            ))
-          )}
-        </section>
-
-        <section>
-          <h3 className="text-xs font-bold text-slate-400 uppercase mb-2">
-            Saved Pipelines
-          </h3>
-
-          {pipelines.length === 0 ? (
-            <Empty />
-          ) : (
-            pipelines.slice(0, 5).map((pipeline) => (
-              <div
-                key={pipeline.graph_id}
-                className="border border-slate-200 rounded-lg p-2 mb-2 text-xs"
-              >
-                <div className="font-semibold text-slate-700">
-                  {pipeline.nodes?.length || 0} nodes ·{" "}
-                  {pipeline.edges?.length || 0} edges
-                </div>
-                <div className="text-[10px] text-slate-400 truncate">
-                  {pipeline.graph_id}
-                </div>
-              </div>
-            ))
-          )}
-        </section>
+            </button>
+          );
+        })}
       </div>
-    </div>
+
+      <div className="soft-scroll max-h-[calc(100vh-245px)] overflow-auto p-4">
+        {activeTab === "experiments" && (
+          <div className="space-y-3">
+            {experiments.length === 0 ? (
+              <Empty />
+            ) : (
+              experiments.map((exp) => (
+                <button
+                  key={exp.experiment_id}
+                  onClick={() => onOpenExperiment(exp.experiment_id)}
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left transition hover:border-blue-300 hover:bg-blue-50"
+                >
+                  <div className="text-sm font-black capitalize text-slate-900">
+                    {exp.problem_type} · {exp.target_column}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {exp.main_metric}:{" "}
+                    <span className="font-bold text-slate-800">
+                      {exp.best_score}
+                    </span>
+                  </div>
+                  <div className="mt-2 truncate text-[10px] text-slate-400">
+                    {exp.experiment_id}
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        )}
+
+        {activeTab === "models" && (
+          <div className="space-y-3">
+            {models.length === 0 ? (
+              <Empty />
+            ) : (
+              models.map((model) => (
+                <div
+                  key={model.model_id}
+                  className="rounded-2xl border border-slate-200 bg-white p-4 transition hover:border-indigo-300 hover:bg-indigo-50"
+                >
+                  <button
+                    onClick={() => onOpenModel(model.model_id)}
+                    className="w-full text-left"
+                  >
+                    <div className="text-sm font-black text-slate-900">
+                      {model.model_name}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {model.main_metric}:{" "}
+                      <span className="font-bold text-slate-800">
+                        {model.score}
+                      </span>
+                    </div>
+                    <div className="mt-2 truncate text-[10px] text-slate-400">
+                      {model.model_id}
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => onSelectModel(model.model_id)}
+                    className="mt-3 rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800"
+                  >
+                    Use for prediction
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {activeTab === "predictions" && (
+          <div className="space-y-3">
+            {predictions.length === 0 ? (
+              <Empty />
+            ) : (
+              predictions.map((log) => (
+                <div
+                  key={log.prediction_id}
+                  className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                >
+                  <div className="truncate text-xs font-bold text-slate-700">
+                    {log.model_id}
+                  </div>
+                  <div className="mt-2 rounded-xl bg-white p-2 text-xs text-slate-600">
+                    {JSON.stringify(log.prediction)}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {activeTab === "pipelines" && (
+          <div className="space-y-3">
+            {pipelines.length === 0 ? (
+              <Empty />
+            ) : (
+              pipelines.map((pipeline) => (
+                <div
+                  key={pipeline.graph_id}
+                  className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                >
+                  <div className="text-sm font-black text-slate-900">
+                    {pipeline.nodes?.length || 0} nodes ·{" "}
+                    {pipeline.edges?.length || 0} edges
+                  </div>
+                  <div className="mt-2 truncate text-[10px] text-slate-400">
+                    {pipeline.graph_id}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
 function Empty() {
   return (
-    <div className="text-xs text-slate-400 border border-dashed border-slate-200 rounded-lg p-3 text-center">
-      No data yet.
+    <div className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-400">
+      No records yet.
     </div>
   );
 }

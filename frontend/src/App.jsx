@@ -2,28 +2,31 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import ReactFlow, {
   Background,
   Controls,
+  MiniMap,
   addEdge,
   applyEdgeChanges,
   applyNodeChanges,
 } from "reactflow";
 import {
-  CheckCircle2,
   Loader2,
   Play,
   RefreshCcw,
   Save,
   Server,
-  Terminal,
-  XCircle,
+  Workflow,
 } from "lucide-react";
 
 import { api, WS_BASE_URL } from "./api";
+
 import AutoMLNode from "./components/AutoMLNode";
 import DataLoaderNode from "./components/DataLoaderNode";
 import DatasetManager from "./components/DatasetManager";
 import PredictPanel from "./components/PredictPanel";
 import RegistryPanel from "./components/RegistryPanel";
 import ResultsDashboard from "./components/ResultsDashboard";
+import DetailsModal from "./components/DetailsModal";
+import ExecutionConsole from "./components/ExecutionConsole";
+import ToastStack from "./components/ToastStack";
 
 const nodeTypes = {
   dataLoader: DataLoaderNode,
@@ -36,8 +39,21 @@ const initialEdges = [
     source: "node_1",
     target: "node_2",
     animated: true,
+    style: {
+      stroke: "#64748b",
+      strokeWidth: 2,
+      strokeDasharray: "6 6",
+    },
   },
 ];
+
+function createToastId() {
+  if (window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+
+  return `toast_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
 
 export default function App() {
   const wsRef = useRef(null);
@@ -46,7 +62,6 @@ export default function App() {
 
   const [datasets, setDatasets] = useState([]);
   const [columns, setColumns] = useState([]);
-
   const [experiments, setExperiments] = useState([]);
   const [models, setModels] = useState([]);
   const [predictions, setPredictions] = useState([]);
@@ -60,9 +75,19 @@ export default function App() {
   const [taskStatus, setTaskStatus] = useState(null);
   const [finalResult, setFinalResult] = useState(null);
 
+  const [consoleCollapsed, setConsoleCollapsed] = useState(false);
+  const [toasts, setToasts] = useState([]);
+
+  const [detailsModal, setDetailsModal] = useState({
+    open: false,
+    title: "",
+    subtitle: "",
+    data: null,
+  });
+
   const updateNodeData = useCallback((nodeId, key, value) => {
-    setNodes((nds) =>
-      nds.map((node) =>
+    setNodes((currentNodes) =>
+      currentNodes.map((node) =>
         node.id === nodeId
           ? {
               ...node,
@@ -80,7 +105,7 @@ export default function App() {
     {
       id: "node_1",
       type: "dataLoader",
-      position: { x: 250, y: 80 },
+      position: { x: 120, y: 80 },
       data: {
         dataset_id: "",
         target_column: "",
@@ -92,7 +117,7 @@ export default function App() {
     {
       id: "node_2",
       type: "automl",
-      position: { x: 250, y: 360 },
+      position: { x: 120, y: 380 },
       data: {
         time_budget: 30,
         onChange: (key, value) => updateNodeData("node_2", key, value),
@@ -102,30 +127,66 @@ export default function App() {
 
   const [edges, setEdges] = useState(initialEdges);
 
-  const onNodesChange = useCallback(
-    (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
-    []
-  );
+  const pushToast = useCallback((type, title, message = "") => {
+    const id = createToastId();
 
-  const onEdgesChange = useCallback(
-    (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
-    []
-  );
+    setToasts((currentToasts) => [
+      ...currentToasts,
+      {
+        id,
+        type,
+        title,
+        message,
+      },
+    ]);
 
-  const onConnect = useCallback(
-    (params) => setEdges((eds) => addEdge({ ...params, animated: true }, eds)),
-    []
-  );
+    setTimeout(() => {
+      setToasts((currentToasts) =>
+        currentToasts.filter((toast) => toast.id !== id)
+      );
+    }, 3500);
+  }, []);
 
-  const addLog = (text) => {
-    setLogs((prev) => [
-      ...prev,
+  const removeToast = useCallback((id) => {
+    setToasts((currentToasts) =>
+      currentToasts.filter((toast) => toast.id !== id)
+    );
+  }, []);
+
+  const addLog = useCallback((text) => {
+    setLogs((currentLogs) => [
+      ...currentLogs,
       {
         time: new Date().toLocaleTimeString(),
         text,
       },
     ]);
-  };
+  }, []);
+
+  const onNodesChange = useCallback((changes) => {
+    setNodes((currentNodes) => applyNodeChanges(changes, currentNodes));
+  }, []);
+
+  const onEdgesChange = useCallback((changes) => {
+    setEdges((currentEdges) => applyEdgeChanges(changes, currentEdges));
+  }, []);
+
+  const onConnect = useCallback((params) => {
+    setEdges((currentEdges) =>
+      addEdge(
+        {
+          ...params,
+          animated: true,
+          style: {
+            stroke: "#64748b",
+            strokeWidth: 2,
+            strokeDasharray: "6 6",
+          },
+        },
+        currentEdges
+      )
+    );
+  }, []);
 
   const refreshHealth = async () => {
     try {
@@ -152,27 +213,28 @@ export default function App() {
   };
 
   const refreshRegistry = async () => {
-    const [expRes, modelRes, predRes, pipeRes] = await Promise.allSettled([
-      api.get("/experiments"),
-      api.get("/models"),
-      api.get("/predictions"),
-      api.get("/pipelines"),
-    ]);
+    const [experimentResponse, modelResponse, predictionResponse, pipelineResponse] =
+      await Promise.allSettled([
+        api.get("/experiments"),
+        api.get("/models"),
+        api.get("/predictions"),
+        api.get("/pipelines"),
+      ]);
 
-    if (expRes.status === "fulfilled") {
-      setExperiments(expRes.value.data.experiments || []);
+    if (experimentResponse.status === "fulfilled") {
+      setExperiments(experimentResponse.value.data.experiments || []);
     }
 
-    if (modelRes.status === "fulfilled") {
-      setModels(modelRes.value.data.models || []);
+    if (modelResponse.status === "fulfilled") {
+      setModels(modelResponse.value.data.models || []);
     }
 
-    if (predRes.status === "fulfilled") {
-      setPredictions(predRes.value.data.predictions || []);
+    if (predictionResponse.status === "fulfilled") {
+      setPredictions(predictionResponse.value.data.predictions || []);
     }
 
-    if (pipeRes.status === "fulfilled") {
-      setPipelines(pipeRes.value.data.pipelines || []);
+    if (pipelineResponse.status === "fulfilled") {
+      setPipelines(pipelineResponse.value.data.pipelines || []);
     }
   };
 
@@ -184,6 +246,68 @@ export default function App() {
       await refreshRegistry();
     } catch (error) {
       console.error(error);
+      pushToast(
+        "error",
+        "Refresh failed",
+        error.response?.data?.detail || error.message
+      );
+    }
+  };
+
+  const openModelDetails = async (modelId) => {
+    try {
+      const response = await api.get(`/models/${modelId}`);
+
+      setDetailsModal({
+        open: true,
+        title: "Model Details",
+        subtitle: modelId,
+        data: response.data,
+      });
+    } catch (error) {
+      pushToast(
+        "error",
+        "Failed to load model",
+        error.response?.data?.detail || error.message
+      );
+    }
+  };
+
+  const openExperimentDetails = async (experimentId) => {
+    try {
+      const response = await api.get(`/experiments/${experimentId}`);
+
+      setDetailsModal({
+        open: true,
+        title: "Experiment Details",
+        subtitle: experimentId,
+        data: response.data,
+      });
+    } catch (error) {
+      pushToast(
+        "error",
+        "Failed to load experiment",
+        error.response?.data?.detail || error.message
+      );
+    }
+  };
+
+  const openDatasetProfile = async (datasetId) => {
+    try {
+      const response = await api.get(`/datasets/${datasetId}/profile`);
+
+      setDetailsModal({
+        open: true,
+        title: "Dataset Profile",
+        subtitle: datasetId,
+        data: response.data,
+      });
+    } catch (error) {
+      pushToast(
+        "error",
+        "Failed to load dataset profile",
+        error.response?.data?.detail || error.message
+      );
     }
   };
 
@@ -191,17 +315,22 @@ export default function App() {
     refreshAll();
 
     return () => {
-      if (wsRef.current) wsRef.current.close();
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
     };
   }, []);
 
   useEffect(() => {
-    refreshColumns(selectedDatasetId);
+    refreshColumns(selectedDatasetId).catch((error) => {
+      console.error(error);
+      setColumns([]);
+    });
   }, [selectedDatasetId]);
 
   useEffect(() => {
-    setNodes((nds) =>
-      nds.map((node) => {
+    setNodes((currentNodes) =>
+      currentNodes.map((node) => {
         if (node.id !== "node_1") return node;
 
         return {
@@ -226,8 +355,8 @@ export default function App() {
   }, [datasets, columns, selectedDatasetId, updateNodeData]);
 
   useEffect(() => {
-    setNodes((nds) =>
-      nds.map((node) => {
+    setNodes((currentNodes) =>
+      currentNodes.map((node) => {
         if (node.id !== "node_2") return node;
 
         return {
@@ -281,13 +410,15 @@ export default function App() {
   };
 
   const connectWebSocket = (taskId) => {
-    if (wsRef.current) wsRef.current.close();
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
 
     const ws = new WebSocket(`${WS_BASE_URL}/ws/task/${taskId}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
-      addLog("🟢 WebSocket connected.");
+      addLog("WebSocket connected");
     };
 
     ws.onmessage = async (event) => {
@@ -295,30 +426,45 @@ export default function App() {
       setTaskStatus(data.status);
 
       if (data.message) {
-        addLog(`[${data.status}] ${data.message}`);
+        addLog(`${data.status}: ${data.message}`);
       }
 
       if (data.status === "SUCCESS") {
-        addLog("✅ Pipeline execution complete.");
+        addLog("Pipeline execution complete");
+
         setFinalResult(data.result);
         setSelectedModelId(data.result?.best_model_id || "");
         setIsRunning(false);
+        setConsoleCollapsed(false);
+
+        pushToast(
+          "success",
+          "Training complete",
+          "A new model was added to the model registry."
+        );
+
         await refreshRegistry();
       }
 
       if (data.status === "FAILURE") {
-        addLog(`❌ ERROR: ${data.error}`);
+        addLog(`ERROR: ${data.error}`);
+
         setIsRunning(false);
+        setConsoleCollapsed(false);
+
+        pushToast("error", "Training failed", data.error || "Celery task failed.");
+
         await refreshRegistry();
       }
     };
 
     ws.onclose = () => {
-      addLog("🔴 WebSocket closed.");
+      addLog("WebSocket closed");
     };
 
     ws.onerror = () => {
-      addLog("❌ WebSocket error.");
+      addLog("WebSocket error");
+      pushToast("error", "WebSocket error", "Could not read live task updates.");
     };
   };
 
@@ -327,6 +473,7 @@ export default function App() {
     setLogs([]);
     setTaskStatus("STARTING");
     setFinalResult(null);
+    setConsoleCollapsed(false);
 
     try {
       const payload = {
@@ -334,24 +481,30 @@ export default function App() {
         edges: cleanEdgesForBackend(),
       };
 
-      addLog("🚀 Sending pipeline graph to backend...");
+      addLog("Sending pipeline graph to backend");
 
       const response = await api.post("/pipeline/execute", payload);
       const taskId = response.data.final_state?.task_id;
 
-      addLog("✅ Backend accepted graph.");
-      addLog(JSON.stringify(response.data.log || []));
+      addLog("Backend accepted graph");
+
+      const backendLogs = response.data.log || [];
+      backendLogs.forEach((entry) => addLog(entry));
 
       if (!taskId) {
         throw new Error("Backend did not return task_id.");
       }
 
-      addLog(`📌 Celery task created: ${taskId}`);
+      addLog(`Celery task created: ${taskId}`);
       connectWebSocket(taskId);
     } catch (error) {
-      addLog(`❌ Pipeline error: ${error.response?.data?.detail || error.message}`);
+      const message = error.response?.data?.detail || error.message;
+
+      addLog(`Pipeline error: ${message}`);
       setIsRunning(false);
       setTaskStatus("FAILURE");
+
+      pushToast("error", "Pipeline failed", message);
     }
   };
 
@@ -363,58 +516,61 @@ export default function App() {
       };
 
       const response = await api.post("/pipeline/save", payload);
-      addLog(`💾 Pipeline saved: ${response.data.graph_id}`);
+
+      addLog(`Pipeline saved: ${response.data.graph_id}`);
+      pushToast("success", "Pipeline saved", response.data.graph_id);
+
       await refreshRegistry();
     } catch (error) {
-      addLog(`❌ Save failed: ${error.response?.data?.detail || error.message}`);
+      const message = error.response?.data?.detail || error.message;
+
+      addLog(`Save failed: ${message}`);
+      pushToast("error", "Save failed", message);
     }
   };
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-slate-50 overflow-hidden">
-      <nav className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-6 shadow-sm z-20 flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold text-slate-800 tracking-tight">
-            AutoML <span className="text-blue-600">Forge</span>
-          </h1>
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#f6f8fb]">
+      <nav className="z-30 flex h-16 flex-shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6 shadow-sm">
+        <div className="flex items-center gap-4">
+          <div>
+            <h1 className="text-xl font-black tracking-tight text-slate-950">
+              AutoML <span className="text-blue-600">Forge</span>
+            </h1>
+            <p className="-mt-0.5 text-xs text-slate-500">
+              No-code ML pipeline builder
+            </p>
+          </div>
 
           <div
-            className={`text-xs px-2 py-1 rounded-full flex items-center gap-1 ${
+            className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${
               backendHealth === "online"
-                ? "bg-green-50 text-green-700 border border-green-200"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                 : backendHealth === "offline"
-                ? "bg-red-50 text-red-700 border border-red-200"
-                : "bg-slate-50 text-slate-600 border border-slate-200"
+                ? "border-red-200 bg-red-50 text-red-700"
+                : "border-slate-200 bg-slate-50 text-slate-600"
             }`}
           >
-            <Server size={12} />
+            <Server size={13} />
             Backend {backendHealth}
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            onClick={refreshAll}
-            className="flex items-center gap-2 px-3 py-2 rounded-md font-medium transition-colors text-sm bg-white border border-slate-200 text-slate-700 hover:bg-slate-50"
-          >
-            <RefreshCcw size={15} />
+          <TopButton onClick={refreshAll} icon={<RefreshCcw size={16} />}>
             Refresh
-          </button>
+          </TopButton>
 
-          <button
-            onClick={handleSavePipeline}
-            className="flex items-center gap-2 px-3 py-2 rounded-md font-medium transition-colors text-sm bg-white border border-slate-200 text-slate-700 hover:bg-slate-50"
-          >
-            <Save size={15} />
-            Save Pipeline
-          </button>
+          <TopButton onClick={handleSavePipeline} icon={<Save size={16} />}>
+            Save
+          </TopButton>
 
           <button
             onClick={handleRunPipeline}
             disabled={isRunning}
-            className={`flex items-center gap-2 px-4 py-2 rounded-md font-medium transition-colors text-sm text-white ${
+            className={`flex items-center gap-2 rounded-2xl px-5 py-3 text-sm font-bold text-white shadow-sm transition ${
               isRunning
-                ? "bg-slate-400 cursor-not-allowed"
+                ? "cursor-not-allowed bg-slate-400"
                 : "bg-blue-600 hover:bg-blue-700"
             }`}
           >
@@ -429,12 +585,13 @@ export default function App() {
       </nav>
 
       <div className="flex flex-grow overflow-hidden">
-        <aside className="w-80 border-r border-slate-200 bg-slate-50 p-4 overflow-auto flex flex-col gap-4">
+        <aside className="soft-scroll w-[360px] flex-shrink-0 space-y-5 overflow-auto border-r border-slate-200 bg-white/70 p-5">
           <DatasetManager
             datasets={datasets}
             selectedDatasetId={selectedDatasetId}
             onSelectDataset={setSelectedDatasetId}
             onRefresh={refreshDatasets}
+            onOpenProfile={openDatasetProfile}
           />
 
           <PredictPanel
@@ -445,8 +602,25 @@ export default function App() {
           />
         </aside>
 
-        <main className="flex-grow flex flex-col overflow-hidden relative">
-          <div className="flex-grow relative">
+        <main className="relative flex flex-grow flex-col overflow-hidden">
+          <div className="pointer-events-none absolute left-6 top-5 z-10 rounded-3xl border border-slate-200 bg-white/90 px-5 py-4 shadow-sm backdrop-blur">
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-950 text-white">
+                <Workflow size={18} />
+              </div>
+
+              <div>
+                <h2 className="text-sm font-black text-slate-900">
+                  Visual Pipeline Canvas
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Data Loader → AutoML Engine → Registry
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="relative flex-grow">
             <ReactFlow
               nodes={nodes}
               edges={edges}
@@ -455,9 +629,17 @@ export default function App() {
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               fitView
+              fitViewOptions={{ padding: 0.35 }}
+              minZoom={0.45}
+              maxZoom={1.5}
             >
-              <Background color="#cbd5e1" gap={16} size={1} />
-              <Controls className="bg-white border-slate-200 shadow-md" />
+              <Background color="#dbe4ef" gap={20} size={1} />
+              <Controls className="!rounded-2xl !border !border-slate-200 !bg-white !shadow-sm" />
+              <MiniMap
+                pannable
+                zoomable
+                className="!rounded-2xl !border !border-slate-200 !bg-white !shadow-sm"
+              />
             </ReactFlow>
 
             <ResultsDashboard
@@ -466,62 +648,15 @@ export default function App() {
             />
           </div>
 
-          {(logs.length > 0 || finalResult) && (
-            <div className="h-64 bg-slate-900 border-t border-slate-700 flex flex-col flex-shrink-0 z-20">
-              <div className="h-10 bg-slate-800 flex items-center justify-between px-4 border-b border-slate-700">
-                <div className="flex items-center gap-2 text-slate-300">
-                  <Terminal size={16} />
-                  <span className="font-mono text-sm font-semibold tracking-wider">
-                    EXECUTION LOGS
-                  </span>
-                </div>
-
-                <div>
-                  {taskStatus === "PROGRESS" && (
-                    <span className="text-blue-400 text-xs font-mono animate-pulse flex items-center gap-2">
-                      <Loader2 size={14} className="animate-spin" /> RUNNING
-                    </span>
-                  )}
-
-                  {taskStatus === "SUCCESS" && (
-                    <span className="text-green-400 text-xs font-mono flex items-center gap-1">
-                      <CheckCircle2 size={14} /> SUCCESS
-                    </span>
-                  )}
-
-                  {taskStatus === "FAILURE" && (
-                    <span className="text-red-400 text-xs font-mono flex items-center gap-1">
-                      <XCircle size={14} /> FAILED
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="p-4 overflow-y-auto font-mono text-xs flex-grow space-y-1">
-                {logs.map((log, index) => (
-                  <div key={index} className="text-slate-300">
-                    <span className="text-slate-500 mr-3">[{log.time}]</span>
-                    <span
-                      className={
-                        log.text.includes("❌")
-                          ? "text-red-400"
-                          : log.text.includes("✅")
-                          ? "text-green-400"
-                          : log.text.includes("📌") || log.text.includes("💾")
-                          ? "text-blue-300"
-                          : ""
-                      }
-                    >
-                      {log.text}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <ExecutionConsole
+            logs={logs}
+            status={taskStatus}
+            isCollapsed={consoleCollapsed}
+            onToggle={() => setConsoleCollapsed((value) => !value)}
+          />
         </main>
 
-        <aside className="w-80 border-l border-slate-200 bg-slate-50 p-4 overflow-auto">
+        <aside className="soft-scroll w-[360px] flex-shrink-0 overflow-auto border-l border-slate-200 bg-white/70 p-5">
           <RegistryPanel
             experiments={experiments}
             models={models}
@@ -529,9 +664,40 @@ export default function App() {
             pipelines={pipelines}
             onRefresh={refreshRegistry}
             onSelectModel={setSelectedModelId}
+            onOpenModel={openModelDetails}
+            onOpenExperiment={openExperimentDetails}
           />
         </aside>
       </div>
+
+      <DetailsModal
+        open={detailsModal.open}
+        title={detailsModal.title}
+        subtitle={detailsModal.subtitle}
+        data={detailsModal.data}
+        onClose={() =>
+          setDetailsModal({
+            open: false,
+            title: "",
+            subtitle: "",
+            data: null,
+          })
+        }
+      />
+
+      <ToastStack toasts={toasts} onRemove={removeToast} />
     </div>
+  );
+}
+
+function TopButton({ children, icon, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50"
+    >
+      {icon}
+      {children}
+    </button>
   );
 }
