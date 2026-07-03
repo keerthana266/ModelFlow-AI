@@ -1,6 +1,6 @@
 # app/schemas/requests.py
 
-from typing import Any, Dict, List, Union , Optional
+from typing import Any, Dict, List, Union , Optional , Literal
 
 from pydantic import BaseModel, Field
 
@@ -36,3 +36,13 @@ class DriftCheckRequest(BaseModel):
     current_dataset_id: Optional[str] = None
     current_data: Optional[List[Dict[str, Any]]] = None
     max_rows: int = Field(default=1000, ge=2, le=10000)
+
+class DeploymentCreateRequest(BaseModel):
+    model_id: str
+    deployment_name: str = "default-model"
+    environment: Literal["development", "staging", "production"] = "production"
+    activate: bool = True
+
+
+class DeploymentStatusUpdateRequest(BaseModel):
+    status: Literal["active", "inactive", "archived"]

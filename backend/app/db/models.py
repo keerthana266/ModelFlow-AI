@@ -113,3 +113,21 @@ class DriftReport(Base):
     summary = Column(JSON, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ModelDeployment(Base):
+    __tablename__ = "model_deployments"
+
+    deployment_id = Column(String, primary_key=True, index=True)
+
+    deployment_name = Column(String, index=True, nullable=False)
+    model_id = Column(String, index=True, nullable=False)
+    experiment_id = Column(String, index=True, nullable=True)
+
+    version = Column(Integer, nullable=False)
+    environment = Column(String, default="production")  # development / staging / production
+    status = Column(String, default="active")  # active / inactive / archived
+
+    endpoint_path = Column(Text, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow)

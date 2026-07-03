@@ -1,5 +1,9 @@
 # app/main.py
 
+import joblib
+import numpy as np
+import pandas as pd
+
 import asyncio
 from typing import Optional
 from pathlib import Path
@@ -40,8 +44,18 @@ from app.services.storage import (
     get_dataset_path,
     load_experiment_result,
     save_uploaded_dataset,
+    generate_id,
 )
 from app.worker import celery_app
+
+from app.schemas.requests import (
+    DeploymentCreateRequest,
+    DeploymentStatusUpdateRequest,
+    DriftCheckRequest,
+    PipelineExecutionRequest,
+    PredictRequest,
+    TrainRequest,
+)
 
 
 app = FastAPI(
@@ -69,6 +83,71 @@ def sanitize_leaderboard(leaderboard):
 
     return cleaned_leaderboard
 
+
+def make_json_safe(value):
+    if isinstance(value, np.generic):
+        return value.item()
+
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+
+    if isinstance(value, list):
+        return [make_json_safe(item) for item in value]
+
+    if isinstance(value, dict):
+        return {
+            key: make_json_safe(item)
+            for key, item in value.items()
+        }
+
+    return value
+
+
+def run_prediction_from_model_record(model_record, input_data, db: Session):
+    model_package = joblib.load(model_record.model_path)
+
+    feature_columns = model_package.get("feature_columns", [])
+    pipeline = model_package["pipeline"]
+
+    if isinstance(input_data, list):
+        input_df = pd.DataFrame(input_data)
+    else:
+        input_df = pd.DataFrame([input_data])
+
+    for column in feature_columns:
+        if column not in input_df.columns:
+            input_df[column] = None
+
+    input_df = input_df[feature_columns]
+
+    predictions = pipeline.predict(input_df)
+    predictions = make_json_safe(predictions)
+
+    if isinstance(predictions, list) and len(predictions) == 1:
+        final_prediction = predictions[0]
+    else:
+        final_prediction = predictions
+
+    prediction_id = generate_id("prediction")
+
+    prediction_record = models.PredictionLog(
+        prediction_id=prediction_id,
+        model_id=model_record.model_id,
+        input_data=make_json_safe(input_data),
+        prediction=make_json_safe(final_prediction),
+    )
+
+    db.add(prediction_record)
+    db.commit()
+
+    return {
+        "prediction_id": prediction_id,
+        "model_id": model_record.model_id,
+        "model_name": model_record.model_name,
+        "problem_type": model_record.problem_type,
+        "target_column": model_record.target_column,
+        "prediction": final_prediction,
+    }
 
 @app.on_event("startup")
 def startup_event():
@@ -469,16 +548,23 @@ def get_model_details(
 def predict_with_model(
     model_id: str,
     request: PredictRequest,
+    db: Session = Depends(get_db),
 ):
-    try:
-        return make_prediction(
-            model_id=model_id,
-            input_data=request.data,
-            log_prediction=True,
-        )
+    model_record = (
+        db.query(models.TrainedModel)
+        .filter(models.TrainedModel.model_id == model_id)
+        .first()
+    )
 
-    except FileNotFoundError as error:
-        raise HTTPException(status_code=404, detail=str(error))
+    if not model_record:
+        raise HTTPException(status_code=404, detail="Model not found.")
+
+    try:
+        return run_prediction_from_model_record(
+            model_record=model_record,
+            input_data=request.data,
+            db=db,
+        )
 
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
@@ -777,3 +863,270 @@ def get_drift_report_html(
         media_type="text/html",
         filename=f"{report_id}.html",
     )
+
+@app.post("/deployments")
+def create_model_deployment(
+    request: DeploymentCreateRequest,
+    db: Session = Depends(get_db),
+):
+    model_record = (
+        db.query(models.TrainedModel)
+        .filter(models.TrainedModel.model_id == request.model_id)
+        .first()
+    )
+
+    if not model_record:
+        raise HTTPException(status_code=404, detail="Model not found.")
+
+    latest_deployment = (
+        db.query(models.ModelDeployment)
+        .filter(models.ModelDeployment.deployment_name == request.deployment_name)
+        .filter(models.ModelDeployment.environment == request.environment)
+        .order_by(models.ModelDeployment.version.desc())
+        .first()
+    )
+
+    next_version = 1
+
+    if latest_deployment:
+        next_version = latest_deployment.version + 1
+
+    if request.activate:
+        (
+            db.query(models.ModelDeployment)
+            .filter(models.ModelDeployment.deployment_name == request.deployment_name)
+            .filter(models.ModelDeployment.environment == request.environment)
+            .filter(models.ModelDeployment.status == "active")
+            .update({"status": "inactive"})
+        )
+
+    deployment_id = generate_id("deployment")
+    endpoint_path = f"/deployments/{deployment_id}/predict"
+
+    deployment = models.ModelDeployment(
+        deployment_id=deployment_id,
+        deployment_name=request.deployment_name,
+        model_id=model_record.model_id,
+        experiment_id=model_record.experiment_id,
+        version=next_version,
+        environment=request.environment,
+        status="active" if request.activate else "inactive",
+        endpoint_path=endpoint_path,
+    )
+
+    db.add(deployment)
+    db.commit()
+    db.refresh(deployment)
+
+    return {
+        "deployment_id": deployment.deployment_id,
+        "deployment_name": deployment.deployment_name,
+        "model_id": deployment.model_id,
+        "experiment_id": deployment.experiment_id,
+        "version": deployment.version,
+        "environment": deployment.environment,
+        "status": deployment.status,
+        "endpoint_path": deployment.endpoint_path,
+        "versioned_endpoint_path": (
+            f"/deployments/name/{deployment.deployment_name}"
+            f"/versions/{deployment.version}/predict"
+        ),
+        "created_at": deployment.created_at,
+    }
+
+@app.get("/deployments")
+def list_model_deployments(
+    db: Session = Depends(get_db),
+):
+    deployments = (
+        db.query(models.ModelDeployment)
+        .order_by(models.ModelDeployment.created_at.desc())
+        .all()
+    )
+
+    return {
+        "deployments": [
+            {
+                "deployment_id": deployment.deployment_id,
+                "deployment_name": deployment.deployment_name,
+                "model_id": deployment.model_id,
+                "experiment_id": deployment.experiment_id,
+                "version": deployment.version,
+                "environment": deployment.environment,
+                "status": deployment.status,
+                "endpoint_path": deployment.endpoint_path,
+                "versioned_endpoint_path": (
+                    f"/deployments/name/{deployment.deployment_name}"
+                    f"/versions/{deployment.version}/predict"
+                ),
+                "created_at": deployment.created_at,
+            }
+            for deployment in deployments
+        ]
+    }
+
+@app.get("/deployments/{deployment_id}")
+def get_model_deployment(
+    deployment_id: str,
+    db: Session = Depends(get_db),
+):
+    deployment = (
+        db.query(models.ModelDeployment)
+        .filter(models.ModelDeployment.deployment_id == deployment_id)
+        .first()
+    )
+
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found.")
+
+    return {
+        "deployment_id": deployment.deployment_id,
+        "deployment_name": deployment.deployment_name,
+        "model_id": deployment.model_id,
+        "experiment_id": deployment.experiment_id,
+        "version": deployment.version,
+        "environment": deployment.environment,
+        "status": deployment.status,
+        "endpoint_path": deployment.endpoint_path,
+        "versioned_endpoint_path": (
+            f"/deployments/name/{deployment.deployment_name}"
+            f"/versions/{deployment.version}/predict"
+        ),
+        "created_at": deployment.created_at,
+    }
+
+@app.patch("/deployments/{deployment_id}/status")
+def update_model_deployment_status(
+    deployment_id: str,
+    request: DeploymentStatusUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    deployment = (
+        db.query(models.ModelDeployment)
+        .filter(models.ModelDeployment.deployment_id == deployment_id)
+        .first()
+    )
+
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found.")
+
+    if request.status == "active":
+        (
+            db.query(models.ModelDeployment)
+            .filter(models.ModelDeployment.deployment_name == deployment.deployment_name)
+            .filter(models.ModelDeployment.environment == deployment.environment)
+            .filter(models.ModelDeployment.status == "active")
+            .update({"status": "inactive"})
+        )
+
+    deployment.status = request.status
+
+    db.commit()
+    db.refresh(deployment)
+
+    return {
+        "deployment_id": deployment.deployment_id,
+        "deployment_name": deployment.deployment_name,
+        "model_id": deployment.model_id,
+        "version": deployment.version,
+        "environment": deployment.environment,
+        "status": deployment.status,
+    }
+
+@app.post("/deployments/{deployment_id}/predict")
+def predict_with_deployment(
+    deployment_id: str,
+    request: PredictRequest,
+    db: Session = Depends(get_db),
+):
+    deployment = (
+        db.query(models.ModelDeployment)
+        .filter(models.ModelDeployment.deployment_id == deployment_id)
+        .first()
+    )
+
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found.")
+
+    if deployment.status != "active":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Deployment is not active. Current status: {deployment.status}",
+        )
+
+    model_record = (
+        db.query(models.TrainedModel)
+        .filter(models.TrainedModel.model_id == deployment.model_id)
+        .first()
+    )
+
+    if not model_record:
+        raise HTTPException(status_code=404, detail="Model not found.")
+
+    try:
+        prediction_result = run_prediction_from_model_record(
+            model_record=model_record,
+            input_data=request.data,
+            db=db,
+        )
+
+        prediction_result["deployment_id"] = deployment.deployment_id
+        prediction_result["deployment_name"] = deployment.deployment_name
+        prediction_result["deployment_version"] = deployment.version
+        prediction_result["environment"] = deployment.environment
+
+        return prediction_result
+
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    
+
+@app.post("/deployments/name/{deployment_name}/versions/{version}/predict")
+def predict_with_deployment_version(
+    deployment_name: str,
+    version: int,
+    request: PredictRequest,
+    db: Session = Depends(get_db),
+):
+    deployment = (
+        db.query(models.ModelDeployment)
+        .filter(models.ModelDeployment.deployment_name == deployment_name)
+        .filter(models.ModelDeployment.version == version)
+        .first()
+    )
+
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment version not found.")
+
+    if deployment.status != "active":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Deployment version is not active. Current status: {deployment.status}",
+        )
+
+    model_record = (
+        db.query(models.TrainedModel)
+        .filter(models.TrainedModel.model_id == deployment.model_id)
+        .first()
+    )
+
+    if not model_record:
+        raise HTTPException(status_code=404, detail="Model not found.")
+
+    try:
+        prediction_result = run_prediction_from_model_record(
+            model_record=model_record,
+            input_data=request.data,
+            db=db,
+        )
+
+        prediction_result["deployment_id"] = deployment.deployment_id
+        prediction_result["deployment_name"] = deployment.deployment_name
+        prediction_result["deployment_version"] = deployment.version
+        prediction_result["environment"] = deployment.environment
+
+        return prediction_result
+
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    
