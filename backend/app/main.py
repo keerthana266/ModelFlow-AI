@@ -57,6 +57,12 @@ from app.schemas.requests import (
     TrainRequest,
 )
 
+from app.services.prediction_validation import (
+    PredictionSchemaValidationError,
+    build_input_schema,
+    validate_and_prepare_prediction_input,
+)
+
 
 app = FastAPI(
     title="AutoML Forge API",
@@ -104,50 +110,59 @@ def make_json_safe(value):
 
 
 def run_prediction_from_model_record(model_record, input_data, db: Session):
-    model_package = joblib.load(model_record.model_path)
+    try:
+        model_package = joblib.load(model_record.model_path)
 
-    feature_columns = model_package.get("feature_columns", [])
-    pipeline = model_package["pipeline"]
+        input_df, cleaned_input, validation_summary = validate_and_prepare_prediction_input(
+            model_record=model_record,
+            input_data=input_data,
+        )
 
-    if isinstance(input_data, list):
-        input_df = pd.DataFrame(input_data)
-    else:
-        input_df = pd.DataFrame([input_data])
+        pipeline = model_package["pipeline"]
 
-    for column in feature_columns:
-        if column not in input_df.columns:
-            input_df[column] = None
+        predictions = pipeline.predict(input_df)
+        predictions = make_json_safe(predictions)
 
-    input_df = input_df[feature_columns]
+        if isinstance(predictions, list) and len(predictions) == 1:
+            final_prediction = predictions[0]
+        else:
+            final_prediction = predictions
 
-    predictions = pipeline.predict(input_df)
-    predictions = make_json_safe(predictions)
+        prediction_id = generate_id("prediction")
 
-    if isinstance(predictions, list) and len(predictions) == 1:
-        final_prediction = predictions[0]
-    else:
-        final_prediction = predictions
+        prediction_record = models.PredictionLog(
+            prediction_id=prediction_id,
+            model_id=model_record.model_id,
+            input_data=make_json_safe(cleaned_input),
+            prediction=make_json_safe(final_prediction),
+        )
 
-    prediction_id = generate_id("prediction")
+        db.add(prediction_record)
+        db.commit()
 
-    prediction_record = models.PredictionLog(
-        prediction_id=prediction_id,
-        model_id=model_record.model_id,
-        input_data=make_json_safe(input_data),
-        prediction=make_json_safe(final_prediction),
-    )
+        return {
+            "prediction_id": prediction_id,
+            "model_id": model_record.model_id,
+            "model_name": model_record.model_name,
+            "problem_type": model_record.problem_type,
+            "target_column": model_record.target_column,
+            "prediction": make_json_safe(final_prediction),
+            "schema_validation": validation_summary,
+        }
 
-    db.add(prediction_record)
-    db.commit()
+    except PredictionSchemaValidationError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Prediction input schema validation failed.",
+                "errors": error.errors,
+                "warnings": error.warnings,
+                "input_schema": build_input_schema(model_record),
+            },
+        )
 
-    return {
-        "prediction_id": prediction_id,
-        "model_id": model_record.model_id,
-        "model_name": model_record.model_name,
-        "problem_type": model_record.problem_type,
-        "target_column": model_record.target_column,
-        "prediction": final_prediction,
-    }
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error))
 
 @app.on_event("startup")
 def startup_event():
@@ -540,6 +555,7 @@ def get_model_details(
         "feature_columns": model.feature_columns,
         "numerical_columns": model.numerical_columns,
         "categorical_columns": model.categorical_columns,
+        "input_schema": build_input_schema(model),
         "created_at": model.created_at,
     }
 
@@ -559,15 +575,11 @@ def predict_with_model(
     if not model_record:
         raise HTTPException(status_code=404, detail="Model not found.")
 
-    try:
-        return run_prediction_from_model_record(
-            model_record=model_record,
-            input_data=request.data,
-            db=db,
-        )
-
-    except Exception as error:
-        raise HTTPException(status_code=400, detail=str(error))
+    return run_prediction_from_model_record(
+        model_record=model_record,
+        input_data=request.data,
+        db=db,
+    )
 
 
 @app.get("/predictions")
@@ -965,9 +977,10 @@ def list_model_deployments(
         ]
     }
 
-@app.get("/deployments/{deployment_id}")
-def get_model_deployment(
+@app.post("/deployments/{deployment_id}/predict")
+def predict_with_deployment(
     deployment_id: str,
+    request: PredictRequest,
     db: Session = Depends(get_db),
 ):
     deployment = (
@@ -979,21 +992,33 @@ def get_model_deployment(
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found.")
 
-    return {
-        "deployment_id": deployment.deployment_id,
-        "deployment_name": deployment.deployment_name,
-        "model_id": deployment.model_id,
-        "experiment_id": deployment.experiment_id,
-        "version": deployment.version,
-        "environment": deployment.environment,
-        "status": deployment.status,
-        "endpoint_path": deployment.endpoint_path,
-        "versioned_endpoint_path": (
-            f"/deployments/name/{deployment.deployment_name}"
-            f"/versions/{deployment.version}/predict"
-        ),
-        "created_at": deployment.created_at,
-    }
+    if deployment.status != "active":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Deployment is not active. Current status: {deployment.status}",
+        )
+
+    model_record = (
+        db.query(models.TrainedModel)
+        .filter(models.TrainedModel.model_id == deployment.model_id)
+        .first()
+    )
+
+    if not model_record:
+        raise HTTPException(status_code=404, detail="Model for deployment not found.")
+
+    prediction_result = run_prediction_from_model_record(
+        model_record=model_record,
+        input_data=request.data,
+        db=db,
+    )
+
+    prediction_result["deployment_id"] = deployment.deployment_id
+    prediction_result["deployment_name"] = deployment.deployment_name
+    prediction_result["deployment_version"] = deployment.version
+    prediction_result["environment"] = deployment.environment
+
+    return prediction_result
 
 @app.patch("/deployments/{deployment_id}/status")
 def update_model_deployment_status(
@@ -1101,7 +1126,7 @@ def predict_with_deployment_version(
     if deployment.status != "active":
         raise HTTPException(
             status_code=400,
-            detail=f"Deployment version is not active. Current status: {deployment.status}",
+            detail=f"Deployment is not active. Current status: {deployment.status}",
         )
 
     model_record = (
@@ -1111,22 +1136,18 @@ def predict_with_deployment_version(
     )
 
     if not model_record:
-        raise HTTPException(status_code=404, detail="Model not found.")
+        raise HTTPException(status_code=404, detail="Model for deployment not found.")
 
-    try:
-        prediction_result = run_prediction_from_model_record(
-            model_record=model_record,
-            input_data=request.data,
-            db=db,
-        )
+    prediction_result = run_prediction_from_model_record(
+        model_record=model_record,
+        input_data=request.data,
+        db=db,
+    )
 
-        prediction_result["deployment_id"] = deployment.deployment_id
-        prediction_result["deployment_name"] = deployment.deployment_name
-        prediction_result["deployment_version"] = deployment.version
-        prediction_result["environment"] = deployment.environment
+    prediction_result["deployment_id"] = deployment.deployment_id
+    prediction_result["deployment_name"] = deployment.deployment_name
+    prediction_result["deployment_version"] = deployment.version
+    prediction_result["environment"] = deployment.environment
 
-        return prediction_result
-
-    except Exception as error:
-        raise HTTPException(status_code=400, detail=str(error))
+    return prediction_result
     
