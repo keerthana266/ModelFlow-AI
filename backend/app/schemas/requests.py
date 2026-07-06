@@ -9,6 +9,7 @@ class TrainRequest(BaseModel):
     dataset_id: str = Field(..., examples=["dataset_abc123"])
     target_column: str = Field(..., examples=["Survived"])
     time_budget: int = Field(default=30, ge=10, le=300)
+    tuning_mode: Literal["flaml", "optuna"] = "flaml"
 
 
 class PredictRequest(BaseModel):
