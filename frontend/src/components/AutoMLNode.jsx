@@ -23,14 +23,18 @@ export default function AutoMLNode({ data }) {
         className="!h-4 !w-4 !border-2 !border-white !bg-violet-500"
       />
 
-      <div className={`flex items-center gap-3 border-b px-4 py-4 ${theme.header}`}>
-        <div className={`grid h-10 w-10 place-items-center rounded-2xl ${theme.iconBox}`}>
+      <div
+        className={`flex items-center gap-3 border-b px-4 py-4 ${theme.header}`}
+      >
+        <div
+          className={`grid h-10 w-10 place-items-center rounded-2xl ${theme.iconBox}`}
+        >
           <Bot size={18} />
         </div>
 
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-black text-slate-900">AutoML Engine</h3>
-          <p className="text-xs text-slate-500">FLAML optimization worker</p>
+          <p className="text-xs text-slate-500">FLAML / Optuna optimizer</p>
         </div>
 
         <StatusIcon status={status} />
@@ -38,6 +42,22 @@ export default function AutoMLNode({ data }) {
 
       <div className="space-y-4 p-4">
         <StatusPill status={status} message={data.statusMessage} />
+
+        <div>
+          <label className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            <SlidersHorizontal size={13} />
+            Training Mode
+          </label>
+
+          <select
+            value={data.tuning_mode || "flaml"}
+            onChange={(e) => data.onChange?.("tuning_mode", e.target.value)}
+            className="nodrag mt-1 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-violet-400 focus:bg-white focus:ring-4 focus:ring-violet-100"
+          >
+            <option value="flaml">FLAML Fast AutoML</option>
+            <option value="optuna">Optuna Advanced Tuning</option>
+          </select>
+        </div>
 
         <div>
           <label className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
@@ -68,8 +88,8 @@ export default function AutoMLNode({ data }) {
             What happens here?
           </div>
           <p className="mt-1 text-xs leading-relaxed text-slate-600">
-            The worker preprocesses features, runs FLAML AutoML, calculates
-            metrics, logs MLflow artifacts, and stores the best model.
+            FLAML gives fast AutoML search. Optuna performs advanced
+            hyperparameter tuning across selected sklearn models.
           </p>
         </div>
       </div>
@@ -119,7 +139,9 @@ function StatusPill({ status, message }) {
       : "bg-slate-50 text-slate-500 border-slate-100";
 
   return (
-    <div className={`rounded-2xl border px-3 py-2 text-xs font-bold ${className}`}>
+    <div
+      className={`rounded-2xl border px-3 py-2 text-xs font-bold ${className}`}
+    >
       {label}
       {message && (
         <span className="ml-1 font-medium opacity-80">· {message}</span>

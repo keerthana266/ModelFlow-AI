@@ -125,6 +125,7 @@ export default function App() {
       position: { x: 120, y: 380 },
       data: {
         time_budget: 30,
+        tuning_mode: "flaml",
         status: "idle",
         statusMessage: "Waiting for training",
         onChange: (key, value) => updateNodeData("node_2", key, value),
@@ -446,6 +447,7 @@ export default function App() {
           position: node.position,
           data: {
             time_budget: Number(node.data.time_budget || 30),
+            tuning_mode: node.data.tuning_mode || "flaml",
           },
         };
       }
@@ -498,6 +500,7 @@ export default function App() {
           position: node.position || { x: 120, y: 380 },
           data: {
             time_budget: node.data?.time_budget || 30,
+            tuning_mode: node.data?.tuning_mode || "flaml",
             status: "idle",
             statusMessage: "Loaded from saved pipeline",
             onChange: (key, value) => updateNodeData(node.id, key, value),

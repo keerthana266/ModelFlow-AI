@@ -1,13 +1,13 @@
 # app/schemas/requests.py
 
-from typing import Any, Dict, List, Union , Optional , Literal
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
 
 class TrainRequest(BaseModel):
-    dataset_id: str = Field(..., examples=["dataset_abc123"])
-    target_column: str = Field(..., examples=["Survived"])
+    dataset_id: str
+    target_column: str
     time_budget: int = Field(default=30, ge=10, le=300)
     tuning_mode: Literal["flaml", "optuna"] = "flaml"
 
@@ -19,7 +19,8 @@ class PredictRequest(BaseModel):
 class PipelineNode(BaseModel):
     id: str
     type: str
-    data: Dict[str, Any]
+    data: Dict[str, Any] = {}
+    position: Optional[Dict[str, Any]] = None
 
 
 class PipelineEdge(BaseModel):
@@ -32,11 +33,13 @@ class PipelineExecutionRequest(BaseModel):
     nodes: List[PipelineNode]
     edges: List[PipelineEdge]
 
+
 class DriftCheckRequest(BaseModel):
     model_id: str
     current_dataset_id: Optional[str] = None
     current_data: Optional[List[Dict[str, Any]]] = None
     max_rows: int = Field(default=1000, ge=2, le=10000)
+
 
 class DeploymentCreateRequest(BaseModel):
     model_id: str

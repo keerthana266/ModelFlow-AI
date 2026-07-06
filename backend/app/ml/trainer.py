@@ -2,16 +2,25 @@
 
 from datetime import datetime, timezone
 from pathlib import Path
-from app.ml.drift import save_reference_data
 
 import joblib
 import mlflow
-import mlflow.sklearn
 import numpy as np
+import optuna
 import pandas as pd
+import scipy.sparse as sp
 import shap
 from flaml import AutoML
 
+from sklearn.ensemble import (
+    ExtraTreesClassifier,
+    ExtraTreesRegressor,
+    GradientBoostingClassifier,
+    GradientBoostingRegressor,
+    RandomForestClassifier,
+    RandomForestRegressor,
+)
+from sklearn.linear_model import ElasticNet, LogisticRegression, Ridge
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -21,13 +30,20 @@ from sklearn.metrics import (
     r2_score,
     recall_score,
 )
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import (
+    KFold,
+    StratifiedKFold,
+    cross_val_score,
+    train_test_split,
+)
 from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import FunctionTransformer
 
 from app.core.config import settings
 from app.db import models
 from app.db.database import Base, SessionLocal, engine
 from app.ml.detector import detect_problem_type
+from app.ml.drift import save_reference_data
 from app.ml.preprocessor import build_preprocessor, get_column_groups
 from app.services.storage import MODEL_DIR, generate_id, save_experiment_result
 from app.worker import celery_app
@@ -35,6 +51,13 @@ from app.worker import celery_app
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def to_dense_matrix(X):
+    if sp.issparse(X):
+        return X.toarray()
+
+    return X
 
 
 def calculate_classification_metrics(y_true, y_pred) -> dict:
@@ -160,6 +183,246 @@ def calculate_shap_importance(
         }
 
 
+def build_optuna_cv(y, problem_type: str):
+    if problem_type == "classification":
+        class_counts = y.value_counts()
+        min_class_count = int(class_counts.min())
+
+        if min_class_count >= 2:
+            splits = min(3, min_class_count)
+
+            return StratifiedKFold(
+                n_splits=splits,
+                shuffle=True,
+                random_state=42,
+            )
+
+        return KFold(
+            n_splits=2,
+            shuffle=True,
+            random_state=42,
+        )
+
+    splits = min(3, max(2, len(y) // 3))
+
+    return KFold(
+        n_splits=splits,
+        shuffle=True,
+        random_state=42,
+    )
+
+
+def build_optuna_estimator(trial, problem_type: str):
+    if problem_type == "classification":
+        model_type = trial.suggest_categorical(
+            "model_type",
+            [
+                "random_forest",
+                "extra_trees",
+                "gradient_boosting",
+                "logistic_regression",
+            ],
+        )
+
+        if model_type == "random_forest":
+            return (
+                "random_forest",
+                RandomForestClassifier(
+                    n_estimators=trial.suggest_int("rf_n_estimators", 50, 300),
+                    max_depth=trial.suggest_int("rf_max_depth", 2, 20),
+                    min_samples_split=trial.suggest_int(
+                        "rf_min_samples_split", 2, 10
+                    ),
+                    min_samples_leaf=trial.suggest_int(
+                        "rf_min_samples_leaf", 1, 5
+                    ),
+                    max_features=trial.suggest_categorical(
+                        "rf_max_features", ["sqrt", "log2", None]
+                    ),
+                    random_state=42,
+                    n_jobs=-1,
+                ),
+            )
+
+        if model_type == "extra_trees":
+            return (
+                "extra_trees",
+                ExtraTreesClassifier(
+                    n_estimators=trial.suggest_int("et_n_estimators", 50, 300),
+                    max_depth=trial.suggest_int("et_max_depth", 2, 20),
+                    min_samples_split=trial.suggest_int(
+                        "et_min_samples_split", 2, 10
+                    ),
+                    min_samples_leaf=trial.suggest_int(
+                        "et_min_samples_leaf", 1, 5
+                    ),
+                    max_features=trial.suggest_categorical(
+                        "et_max_features", ["sqrt", "log2", None]
+                    ),
+                    random_state=42,
+                    n_jobs=-1,
+                ),
+            )
+
+        if model_type == "gradient_boosting":
+            return (
+                "gradient_boosting",
+                GradientBoostingClassifier(
+                    n_estimators=trial.suggest_int("gb_n_estimators", 50, 200),
+                    learning_rate=trial.suggest_float(
+                        "gb_learning_rate", 0.01, 0.3, log=True
+                    ),
+                    max_depth=trial.suggest_int("gb_max_depth", 2, 8),
+                    subsample=trial.suggest_float("gb_subsample", 0.6, 1.0),
+                    random_state=42,
+                ),
+            )
+
+        return (
+            "logistic_regression",
+            LogisticRegression(
+                C=trial.suggest_float("lr_C", 0.01, 100.0, log=True),
+                max_iter=1000,
+                solver="liblinear",
+                random_state=42,
+            ),
+        )
+
+    model_type = trial.suggest_categorical(
+        "model_type",
+        [
+            "random_forest",
+            "extra_trees",
+            "gradient_boosting",
+            "ridge",
+            "elasticnet",
+        ],
+    )
+
+    if model_type == "random_forest":
+        return (
+            "random_forest",
+            RandomForestRegressor(
+                n_estimators=trial.suggest_int("rf_n_estimators", 50, 300),
+                max_depth=trial.suggest_int("rf_max_depth", 2, 20),
+                min_samples_split=trial.suggest_int("rf_min_samples_split", 2, 10),
+                min_samples_leaf=trial.suggest_int("rf_min_samples_leaf", 1, 5),
+                max_features=trial.suggest_categorical(
+                    "rf_max_features", ["sqrt", "log2", None]
+                ),
+                random_state=42,
+                n_jobs=-1,
+            ),
+        )
+
+    if model_type == "extra_trees":
+        return (
+            "extra_trees",
+            ExtraTreesRegressor(
+                n_estimators=trial.suggest_int("et_n_estimators", 50, 300),
+                max_depth=trial.suggest_int("et_max_depth", 2, 20),
+                min_samples_split=trial.suggest_int("et_min_samples_split", 2, 10),
+                min_samples_leaf=trial.suggest_int("et_min_samples_leaf", 1, 5),
+                max_features=trial.suggest_categorical(
+                    "et_max_features", ["sqrt", "log2", None]
+                ),
+                random_state=42,
+                n_jobs=-1,
+            ),
+        )
+
+    if model_type == "gradient_boosting":
+        return (
+            "gradient_boosting",
+            GradientBoostingRegressor(
+                n_estimators=trial.suggest_int("gb_n_estimators", 50, 200),
+                learning_rate=trial.suggest_float(
+                    "gb_learning_rate", 0.01, 0.3, log=True
+                ),
+                max_depth=trial.suggest_int("gb_max_depth", 2, 8),
+                subsample=trial.suggest_float("gb_subsample", 0.6, 1.0),
+                random_state=42,
+            ),
+        )
+
+    if model_type == "ridge":
+        return (
+            "ridge",
+            Ridge(
+                alpha=trial.suggest_float("ridge_alpha", 0.01, 100.0, log=True),
+                random_state=42,
+            ),
+        )
+
+    return (
+        "elasticnet",
+        ElasticNet(
+            alpha=trial.suggest_float("en_alpha", 0.01, 100.0, log=True),
+            l1_ratio=trial.suggest_float("en_l1_ratio", 0.05, 0.95),
+            random_state=42,
+            max_iter=2000,
+        ),
+    )
+
+
+def run_optuna_tuning(
+    X_train_transformed,
+    y_train,
+    problem_type: str,
+    time_budget: int,
+):
+    X_train_dense = to_dense_matrix(X_train_transformed)
+
+    scoring = "f1_weighted" if problem_type == "classification" else "r2"
+    cv = build_optuna_cv(y_train, problem_type)
+
+    study = optuna.create_study(direction="maximize")
+
+    def objective(trial):
+        _, estimator = build_optuna_estimator(trial, problem_type)
+
+        try:
+            scores = cross_val_score(
+                estimator,
+                X_train_dense,
+                y_train,
+                scoring=scoring,
+                cv=cv,
+                n_jobs=1,
+                error_score="raise",
+            )
+
+            return float(scores.mean())
+
+        except Exception:
+            return -1e9
+
+    study.optimize(
+        objective,
+        timeout=time_budget,
+        n_trials=50,
+        show_progress_bar=False,
+    )
+
+    best_trial = study.best_trial
+    fixed_trial = optuna.trial.FixedTrial(best_trial.params)
+
+    best_estimator_name, best_estimator = build_optuna_estimator(
+        fixed_trial,
+        problem_type,
+    )
+
+    best_estimator.fit(X_train_dense, y_train)
+
+    return {
+        "best_estimator_name": best_estimator_name,
+        "best_model_instance": best_estimator,
+        "optuna_best_value": float(best_trial.value),
+        "optuna_best_params": best_trial.params,
+        "optuna_trials": len(study.trials),
+    }
+
+
 def log_training_run_to_mlflow(
     model_path,
     result: dict,
@@ -168,13 +431,6 @@ def log_training_run_to_mlflow(
     best_estimator_name: str,
     time_budget: int,
 ) -> dict:
-    """
-    Logs training metadata, metrics, feature importance, and the saved .joblib
-    model artifact to MLflow.
-
-    This avoids MLflow sklearn serialization issues on Windows.
-    """
-
     try:
         mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
         mlflow.set_experiment(settings.MLFLOW_EXPERIMENT_NAME)
@@ -186,6 +442,7 @@ def log_training_run_to_mlflow(
             mlflow.set_tag("project", "AutoML Forge")
             mlflow.set_tag("run_type", "automl_training")
             mlflow.set_tag("training_status", "completed")
+            mlflow.set_tag("tuning_mode", result.get("tuning_mode", "flaml"))
 
             mlflow.log_params(
                 {
@@ -198,9 +455,25 @@ def log_training_run_to_mlflow(
                     "total_columns": result["total_columns"],
                     "main_metric": result["main_metric"],
                     "time_budget": time_budget,
+                    "tuning_mode": result.get("tuning_mode", "flaml"),
                     "num_features": len(result["feature_columns"]),
                 }
             )
+
+            optuna_info = result.get("optuna_info") or {}
+
+            if optuna_info:
+                mlflow.log_params(
+                    {
+                        "optuna_trials": optuna_info.get("optuna_trials"),
+                        "optuna_best_value": optuna_info.get("optuna_best_value"),
+                    }
+                )
+
+                mlflow.log_dict(
+                    optuna_info,
+                    "optuna_info.json",
+                )
 
             for metric_name, metric_value in metrics.items():
                 if isinstance(metric_value, (int, float)):
@@ -300,8 +573,12 @@ def train_automl(
     dataset_path_str: str,
     target_column: str,
     time_budget: int = 30,
+    tuning_mode: str = "flaml",
 ) -> dict:
     time_budget = max(10, min(int(time_budget), 300))
+
+    if tuning_mode not in ["flaml", "optuna"]:
+        tuning_mode = "flaml"
 
     self.update_state(
         state="PROGRESS",
@@ -344,51 +621,106 @@ def train_automl(
     X_train_transformed = preprocessor.fit_transform(X_train)
     X_test_transformed = preprocessor.transform(X_test)
 
-    self.update_state(
-        state="PROGRESS",
-        meta={"message": "FLAML is actively optimizing models. Please wait..."},
-    )
+    optuna_info = {}
 
-    automl = AutoML()
+    if tuning_mode == "optuna":
+        self.update_state(
+            state="PROGRESS",
+            meta={
+                "message": "Optuna is tuning hyperparameters across candidate models..."
+            },
+        )
 
-    automl_settings = {
-        "time_budget": time_budget,
-        "metric": "f1" if problem_type == "classification" else "r2",
-        "task": problem_type,
-        "verbose": 0,
-    }
+        optuna_result = run_optuna_tuning(
+            X_train_transformed=X_train_transformed,
+            y_train=y_train,
+            problem_type=problem_type,
+            time_budget=time_budget,
+        )
 
-    automl.fit(
-        X_train=X_train_transformed,
-        y_train=y_train,
-        **automl_settings,
-    )
+        best_estimator_name = optuna_result["best_estimator_name"]
+        best_model_instance = optuna_result["best_model_instance"]
 
-    best_estimator_name = automl.best_estimator
-    best_model_instance = automl.model.estimator
+        optuna_info = {
+            "optuna_best_value": optuna_result["optuna_best_value"],
+            "optuna_best_params": optuna_result["optuna_best_params"],
+            "optuna_trials": optuna_result["optuna_trials"],
+        }
+
+    else:
+        self.update_state(
+            state="PROGRESS",
+            meta={"message": "FLAML is actively optimizing models. Please wait..."},
+        )
+
+        automl = AutoML()
+
+        automl_settings = {
+            "time_budget": time_budget,
+            "metric": "f1" if problem_type == "classification" else "r2",
+            "task": problem_type,
+            "verbose": 0,
+        }
+
+        automl.fit(
+            X_train=X_train_transformed,
+            y_train=y_train,
+            **automl_settings,
+        )
+
+        best_estimator_name = automl.best_estimator
+        best_model_instance = automl.model.estimator
 
     self.update_state(
         state="PROGRESS",
         meta={"message": "Packaging the optimized pipeline..."},
     )
 
-    final_pipeline = Pipeline(
-        steps=[
-            ("preprocessor", preprocessor),
-            ("model", best_model_instance),
-        ]
-    )
+    if tuning_mode == "optuna":
+        final_pipeline = Pipeline(
+            steps=[
+                ("preprocessor", preprocessor),
+                (
+                    "to_dense",
+                    FunctionTransformer(
+                        to_dense_matrix,
+                        accept_sparse=True,
+                    ),
+                ),
+                ("model", best_model_instance),
+            ]
+        )
+
+    else:
+        final_pipeline = Pipeline(
+            steps=[
+                ("preprocessor", preprocessor),
+                ("model", best_model_instance),
+            ]
+        )
 
     self.update_state(
         state="PROGRESS",
         meta={"message": "Calculating SHAP feature importance..."},
     )
 
+    shap_train_data = (
+        to_dense_matrix(X_train_transformed)
+        if tuning_mode == "optuna"
+        else X_train_transformed
+    )
+
+    shap_test_data = (
+        to_dense_matrix(X_test_transformed)
+        if tuning_mode == "optuna"
+        else X_test_transformed
+    )
+
     feature_importance = calculate_shap_importance(
         preprocessor=preprocessor,
         best_model_instance=best_model_instance,
-        X_train_transformed=X_train_transformed,
-        X_test_transformed=X_test_transformed,
+        X_train_transformed=shap_train_data,
+        X_test_transformed=shap_test_data,
     )
 
     predictions = final_pipeline.predict(X_test)
@@ -420,16 +752,24 @@ def train_automl(
         "pipeline": final_pipeline,
         "metrics": metrics,
         "time_budget": time_budget,
+        "tuning_mode": tuning_mode,
+        "optuna_info": optuna_info,
         "reference_data_path": str(reference_data_path),
         "created_at": utc_now_iso(),
     }
 
     joblib.dump(model_package, model_path)
 
+    leaderboard_model_name = (
+        f"Optuna Tuned: {best_estimator_name.upper()}"
+        if tuning_mode == "optuna"
+        else f"FLAML Tuned: {best_estimator_name.upper()}"
+    )
+
     leaderboard = [
         {
             "model_id": model_id,
-            "model_name": f"FLAML Tuned: {best_estimator_name.upper()}",
+            "model_name": leaderboard_model_name,
             "status": "success",
             "metrics": metrics,
             "main_metric": main_metric,
@@ -453,6 +793,8 @@ def train_automl(
         "feature_importance": feature_importance,
         "leaderboard": leaderboard,
         "time_budget": time_budget,
+        "tuning_mode": tuning_mode,
+        "optuna_info": optuna_info,
         "created_at": utc_now_iso(),
     }
 
@@ -462,12 +804,12 @@ def train_automl(
     )
 
     mlflow_info = log_training_run_to_mlflow(
-         model_path=model_path,
-         result=result,
-         metrics=metrics,
-         feature_importance=feature_importance,
-         best_estimator_name=best_estimator_name,
-         time_budget=time_budget,
+        model_path=model_path,
+        result=result,
+        metrics=metrics,
+        feature_importance=feature_importance,
+        best_estimator_name=best_estimator_name,
+        time_budget=time_budget,
     )
 
     result.update(mlflow_info)
