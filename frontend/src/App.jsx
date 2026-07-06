@@ -20,6 +20,9 @@ import { api, WS_BASE_URL } from "./api";
 
 import AutoMLNode from "./components/AutoMLNode";
 import DataLoaderNode from "./components/DataLoaderNode";
+import GenericPipelineNode from "./components/GenericPipelineNode";
+import NodePalette, { NODE_TEMPLATES } from "./components/NodePalette";
+
 import DatasetManager from "./components/DatasetManager";
 import PredictPanel from "./components/PredictPanel";
 import DriftPanel from "./components/DriftPanel";
@@ -33,19 +36,69 @@ import ToastStack from "./components/ToastStack";
 const nodeTypes = {
   dataLoader: DataLoaderNode,
   automl: AutoMLNode,
+  preprocessor: GenericPipelineNode,
+  evaluator: GenericPipelineNode,
+  explainer: GenericPipelineNode,
+  mlflow: GenericPipelineNode,
+  drift: GenericPipelineNode,
+  deploy: GenericPipelineNode,
+};
+
+const edgeStyle = {
+  stroke: "#64748b",
+  strokeWidth: 2,
+  strokeDasharray: "6 6",
 };
 
 const initialEdges = [
   {
     id: "edge_1",
     source: "node_1",
+    target: "node_preprocessor",
+    animated: true,
+    style: edgeStyle,
+  },
+  {
+    id: "edge_2",
+    source: "node_preprocessor",
     target: "node_2",
     animated: true,
-    style: {
-      stroke: "#64748b",
-      strokeWidth: 2,
-      strokeDasharray: "6 6",
-    },
+    style: edgeStyle,
+  },
+  {
+    id: "edge_3",
+    source: "node_2",
+    target: "node_evaluator",
+    animated: true,
+    style: edgeStyle,
+  },
+  {
+    id: "edge_4",
+    source: "node_evaluator",
+    target: "node_explainer",
+    animated: true,
+    style: edgeStyle,
+  },
+  {
+    id: "edge_5",
+    source: "node_explainer",
+    target: "node_mlflow",
+    animated: true,
+    style: edgeStyle,
+  },
+  {
+    id: "edge_6",
+    source: "node_mlflow",
+    target: "node_drift",
+    animated: true,
+    style: edgeStyle,
+  },
+  {
+    id: "edge_7",
+    source: "node_drift",
+    target: "node_deploy",
+    animated: true,
+    style: edgeStyle,
   },
 ];
 
@@ -57,8 +110,15 @@ function createToastId() {
   return `toast_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
+function findTemplate(type) {
+  return NODE_TEMPLATES.find((template) => template.type === type);
+}
+
 export default function App() {
   const wsRef = useRef(null);
+  const reactFlowWrapperRef = useRef(null);
+
+  const [reactFlowInstance, setReactFlowInstance] = useState(null);
 
   const [backendHealth, setBackendHealth] = useState("checking");
 
@@ -104,11 +164,67 @@ export default function App() {
     );
   }, []);
 
+  const createNodeFromTemplate = useCallback(
+    (template, position) => {
+      const id = `${template.type}_${Date.now().toString(16)}_${Math.random()
+        .toString(16)
+        .slice(2, 6)}`;
+
+      if (template.type === "dataLoader") {
+        return {
+          id,
+          type: "dataLoader",
+          position,
+          data: {
+            dataset_id: "",
+            target_column: "",
+            datasets,
+            columns,
+            status: "idle",
+            statusMessage: "Waiting for dataset",
+            onChange: (key, value) => updateNodeData(id, key, value),
+          },
+        };
+      }
+
+      if (template.type === "automl") {
+        return {
+          id,
+          type: "automl",
+          position,
+          data: {
+            time_budget: 30,
+            tuning_mode: "flaml",
+            status: "idle",
+            statusMessage: "Waiting for training",
+            onChange: (key, value) => updateNodeData(id, key, value),
+          },
+        };
+      }
+
+      return {
+        id,
+        type: template.type,
+        position,
+        data: {
+          label: template.label,
+          description: template.description,
+          icon: template.icon,
+          color: template.color,
+          nodeType: template.type,
+          status: "idle",
+          statusMessage: "Waiting",
+        },
+      };
+    },
+    [columns, datasets, updateNodeData]
+  );
+
   const [nodes, setNodes] = useState([
     {
       id: "node_1",
       type: "dataLoader",
-      position: { x: 120, y: 80 },
+      position: { x: 100, y: 80 },
       data: {
         dataset_id: "",
         target_column: "",
@@ -120,15 +236,99 @@ export default function App() {
       },
     },
     {
+      id: "node_preprocessor",
+      type: "preprocessor",
+      position: { x: 500, y: 80 },
+      data: {
+        label: "Preprocessor",
+        description: "Clean missing values and encode features",
+        icon: "workflow",
+        color: "cyan",
+        nodeType: "preprocessor",
+        status: "idle",
+        statusMessage: "Waiting",
+      },
+    },
+    {
       id: "node_2",
       type: "automl",
-      position: { x: 120, y: 380 },
+      position: { x: 900, y: 80 },
       data: {
         time_budget: 30,
         tuning_mode: "flaml",
         status: "idle",
         statusMessage: "Waiting for training",
         onChange: (key, value) => updateNodeData("node_2", key, value),
+      },
+    },
+    {
+      id: "node_evaluator",
+      type: "evaluator",
+      position: { x: 1300, y: 80 },
+      data: {
+        label: "Evaluator",
+        description: "Calculate accuracy, F1, R2, MAE and RMSE",
+        icon: "bar-chart",
+        color: "emerald",
+        nodeType: "evaluator",
+        status: "idle",
+        statusMessage: "Waiting",
+      },
+    },
+    {
+      id: "node_explainer",
+      type: "explainer",
+      position: { x: 1700, y: 80 },
+      data: {
+        label: "SHAP Explainer",
+        description: "Generate feature importance explanations",
+        icon: "sparkles",
+        color: "amber",
+        nodeType: "explainer",
+        status: "idle",
+        statusMessage: "Waiting",
+      },
+    },
+    {
+      id: "node_mlflow",
+      type: "mlflow",
+      position: { x: 2100, y: 80 },
+      data: {
+        label: "MLflow Tracker",
+        description: "Log metrics, params and model artifacts",
+        icon: "line-chart",
+        color: "indigo",
+        nodeType: "mlflow",
+        status: "idle",
+        statusMessage: "Waiting",
+      },
+    },
+    {
+      id: "node_drift",
+      type: "drift",
+      position: { x: 2500, y: 80 },
+      data: {
+        label: "Drift Monitor",
+        description: "Compare current data with training data",
+        icon: "activity",
+        color: "orange",
+        nodeType: "drift",
+        status: "idle",
+        statusMessage: "Run after training",
+      },
+    },
+    {
+      id: "node_deploy",
+      type: "deploy",
+      position: { x: 2900, y: 80 },
+      data: {
+        label: "Deploy API",
+        description: "Deploy model as versioned REST API",
+        icon: "rocket",
+        color: "rose",
+        nodeType: "deploy",
+        status: "idle",
+        statusMessage: "Ready after training",
       },
     },
   ]);
@@ -203,11 +403,50 @@ export default function App() {
               ? "Waiting for dataset"
               : node.type === "automl"
               ? "Waiting for training"
-              : "",
+              : node.type === "drift"
+              ? "Run after training"
+              : node.type === "deploy"
+              ? "Ready after training"
+              : "Waiting",
         },
       }))
     );
   }, []);
+
+  const updateVisualNodesFromProgress = useCallback(
+    (message = "") => {
+      const text = message.toLowerCase();
+
+      if (text.includes("preprocessing")) {
+        setNodeStatusByType("preprocessor", "running", "Transforming features");
+      }
+
+      if (
+        text.includes("flaml") ||
+        text.includes("optuna") ||
+        text.includes("optimizing") ||
+        text.includes("tuning")
+      ) {
+        setNodeStatusByType("preprocessor", "success", "Features prepared");
+        setNodeStatusByType("automl", "running", message);
+      }
+
+      if (text.includes("packaging")) {
+        setNodeStatusByType("evaluator", "running", "Evaluating model");
+      }
+
+      if (text.includes("shap")) {
+        setNodeStatusByType("evaluator", "success", "Metrics calculated");
+        setNodeStatusByType("explainer", "running", "Generating SHAP");
+      }
+
+      if (text.includes("mlflow")) {
+        setNodeStatusByType("explainer", "success", "SHAP generated");
+        setNodeStatusByType("mlflow", "running", "Logging experiment");
+      }
+    },
+    [setNodeStatusByType]
+  );
 
   const onNodesChange = useCallback((changes) => {
     setNodes((currentNodes) => applyNodeChanges(changes, currentNodes));
@@ -223,16 +462,60 @@ export default function App() {
         {
           ...params,
           animated: true,
-          style: {
-            stroke: "#64748b",
-            strokeWidth: 2,
-            strokeDasharray: "6 6",
-          },
+          style: edgeStyle,
         },
         currentEdges
       )
     );
   }, []);
+
+  const addNodeFromPalette = useCallback(
+    (template) => {
+      const position = {
+        x: 460,
+        y: 120 + Math.max(0, nodes.length - 2) * 120,
+      };
+
+      const newNode = createNodeFromTemplate(template, position);
+
+      setNodes((currentNodes) => [...currentNodes, newNode]);
+
+      pushToast("success", "Node added", `${template.label} added to canvas.`);
+    },
+    [createNodeFromTemplate, nodes.length, pushToast]
+  );
+
+  const onDragOver = useCallback((event) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }, []);
+
+  const onDrop = useCallback(
+    (event) => {
+      event.preventDefault();
+
+      if (!reactFlowWrapperRef.current || !reactFlowInstance) return;
+
+      const raw = event.dataTransfer.getData("application/reactflow");
+
+      if (!raw) return;
+
+      const template = JSON.parse(raw);
+      const bounds = reactFlowWrapperRef.current.getBoundingClientRect();
+
+      const position = reactFlowInstance.project({
+        x: event.clientX - bounds.left,
+        y: event.clientY - bounds.top,
+      });
+
+      const newNode = createNodeFromTemplate(template, position);
+
+      setNodes((currentNodes) => [...currentNodes, newNode]);
+
+      pushToast("success", "Node added", `${template.label} added to canvas.`);
+    },
+    [createNodeFromTemplate, pushToast, reactFlowInstance]
+  );
 
   const refreshHealth = async () => {
     try {
@@ -387,7 +670,7 @@ export default function App() {
   useEffect(() => {
     setNodes((currentNodes) =>
       currentNodes.map((node) => {
-        if (node.id !== "node_1") return node;
+        if (node.type !== "dataLoader") return node;
 
         return {
           ...node,
@@ -395,14 +678,14 @@ export default function App() {
             ...node.data,
             datasets,
             columns,
-            dataset_id: selectedDatasetId || node.data.dataset_id,
+            dataset_id: node.data.dataset_id || selectedDatasetId,
             onChange: (key, value) => {
               if (key === "dataset_id") {
                 setSelectedDatasetId(value);
-                updateNodeData("node_1", "target_column", "");
+                updateNodeData(node.id, "target_column", "");
               }
 
-              updateNodeData("node_1", key, value);
+              updateNodeData(node.id, key, value);
             },
           },
         };
@@ -413,13 +696,13 @@ export default function App() {
   useEffect(() => {
     setNodes((currentNodes) =>
       currentNodes.map((node) => {
-        if (node.id !== "node_2") return node;
+        if (node.type !== "automl") return node;
 
         return {
           ...node,
           data: {
             ...node.data,
-            onChange: (key, value) => updateNodeData("node_2", key, value),
+            onChange: (key, value) => updateNodeData(node.id, key, value),
           },
         };
       })
@@ -456,7 +739,11 @@ export default function App() {
         id: node.id,
         type: node.type,
         position: node.position,
-        data: {},
+        data: {
+          label: node.data.label,
+          description: node.data.description,
+          nodeType: node.data.nodeType || node.type,
+        },
       };
     });
   };
@@ -508,10 +795,19 @@ export default function App() {
         };
       }
 
+      const template = findTemplate(node.type);
+
       return {
         ...node,
         data: {
-          ...(node.data || {}),
+          label: node.data?.label || template?.label || node.type,
+          description:
+            node.data?.description ||
+            template?.description ||
+            "Visual pipeline step",
+          icon: node.data?.icon || template?.icon || "workflow",
+          color: node.data?.color || template?.color || "blue",
+          nodeType: node.data?.nodeType || node.type,
           status: "idle",
           statusMessage: "Loaded from saved pipeline",
         },
@@ -523,11 +819,7 @@ export default function App() {
     return savedEdges.map((edge) => ({
       ...edge,
       animated: true,
-      style: {
-        stroke: "#64748b",
-        strokeWidth: 2,
-        strokeDasharray: "6 6",
-      },
+      style: edgeStyle,
     }));
   };
 
@@ -592,6 +884,8 @@ export default function App() {
           "running",
           data.message || "Training in progress"
         );
+
+        updateVisualNodesFromProgress(data.message || "");
       }
 
       if (data.message) {
@@ -607,7 +901,13 @@ export default function App() {
         setConsoleCollapsed(false);
 
         setNodeStatusByType("dataLoader", "success", "Completed");
+        setNodeStatusByType("preprocessor", "success", "Features prepared");
         setNodeStatusByType("automl", "success", "Model trained successfully");
+        setNodeStatusByType("evaluator", "success", "Metrics calculated");
+        setNodeStatusByType("explainer", "success", "SHAP generated");
+        setNodeStatusByType("mlflow", "success", "Experiment logged");
+        setNodeStatusByType("drift", "idle", "Run drift check after training");
+        setNodeStatusByType("deploy", "idle", "Ready for deployment");
 
         pushToast(
           "success",
@@ -672,6 +972,7 @@ export default function App() {
       addLog("Backend accepted graph");
 
       setNodeStatusByType("dataLoader", "success", "Dataset accepted");
+      setNodeStatusByType("preprocessor", "running", "Waiting for worker");
       setNodeStatusByType("automl", "running", "Training task queued");
 
       const backendLogs = response.data.log || [];
@@ -775,6 +1076,8 @@ export default function App() {
 
       <div className="flex flex-grow overflow-hidden">
         <aside className="soft-scroll w-[360px] flex-shrink-0 space-y-5 overflow-auto border-r border-slate-200 bg-white/70 p-5">
+          <NodePalette onAddNode={addNodeFromPalette} />
+
           <DatasetManager
             datasets={datasets}
             selectedDatasetId={selectedDatasetId}
@@ -811,23 +1114,26 @@ export default function App() {
                   Visual Pipeline Canvas
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Data Loader → AutoML Engine → Registry
+                  Drag nodes → connect pipeline → execute
                 </p>
               </div>
             </div>
           </div>
 
-          <div className="relative flex-grow">
+          <div ref={reactFlowWrapperRef} className="relative flex-grow">
             <ReactFlow
               nodes={nodes}
               edges={edges}
               nodeTypes={nodeTypes}
+              onInit={setReactFlowInstance}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
+              onDrop={onDrop}
+              onDragOver={onDragOver}
               fitView
-              fitViewOptions={{ padding: 0.35 }}
-              minZoom={0.45}
+              fitViewOptions={{ padding: 0.25 }}
+              minZoom={0.2}
               maxZoom={1.5}
             >
               <Background color="#dbe4ef" gap={20} size={1} />

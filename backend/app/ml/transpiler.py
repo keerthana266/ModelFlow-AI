@@ -6,6 +6,16 @@ from app.ml.trainer import train_automl
 from app.services.storage import get_dataset_path
 
 
+VISUAL_NODE_MESSAGES = {
+    "preprocessor": "Feature preprocessing is handled inside the trainer.",
+    "evaluator": "Evaluation metrics will be calculated after training.",
+    "explainer": "SHAP explainability will be generated after training.",
+    "mlflow": "MLflow tracking will log metrics, params, and artifacts.",
+    "drift": "Drift monitor can be run after a trained model exists.",
+    "deploy": "Deployment can be created after model training completes.",
+}
+
+
 def normalize_node_type(node_type: str) -> str:
     return str(node_type or "").strip().lower()
 
@@ -18,7 +28,9 @@ def find_root_node(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> 
         raise ValueError("Invalid pipeline: no starting node found.")
 
     if len(root_nodes) > 1:
-        raise ValueError("Invalid pipeline: only one starting node is supported.")
+        raise ValueError(
+            "Invalid pipeline: only one connected starting node is supported."
+        )
 
     return root_nodes[0]
 
@@ -115,8 +127,11 @@ def execute_pipeline_graph(nodes: list, edges: list) -> dict:
 
             execution_log.append(f"-> Background Celery task queued: {task.id}")
 
+        elif node_type in VISUAL_NODE_MESSAGES:
+            execution_log.append(f"-> {VISUAL_NODE_MESSAGES[node_type]}")
+
         else:
-            execution_log.append(f"-> Unknown node type '{node_type}' ignored.")
+            execution_log.append(f"-> Unknown visual node '{node_type}' skipped.")
 
         current_node_id = find_next_node_id(current_node_id, edges)
 
