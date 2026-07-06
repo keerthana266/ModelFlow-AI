@@ -22,13 +22,13 @@ import AutoMLNode from "./components/AutoMLNode";
 import DataLoaderNode from "./components/DataLoaderNode";
 import DatasetManager from "./components/DatasetManager";
 import PredictPanel from "./components/PredictPanel";
+import DriftPanel from "./components/DriftPanel";
+import DeploymentPanel from "./components/DeploymentPanel";
 import RegistryPanel from "./components/RegistryPanel";
 import ResultsDashboard from "./components/ResultsDashboard";
 import DetailsModal from "./components/DetailsModal";
 import ExecutionConsole from "./components/ExecutionConsole";
 import ToastStack from "./components/ToastStack";
-import DriftPanel from "./components/DriftPanel";
-import DeploymentPanel from "./components/DeploymentPanel";
 
 const nodeTypes = {
   dataLoader: DataLoaderNode,
@@ -68,6 +68,7 @@ export default function App() {
   const [models, setModels] = useState([]);
   const [predictions, setPredictions] = useState([]);
   const [pipelines, setPipelines] = useState([]);
+  const [deployments, setDeployments] = useState([]);
 
   const [selectedDatasetId, setSelectedDatasetId] = useState("");
   const [selectedModelId, setSelectedModelId] = useState("");
@@ -78,7 +79,6 @@ export default function App() {
   const [finalResult, setFinalResult] = useState(null);
 
   const [consoleCollapsed, setConsoleCollapsed] = useState(false);
-  const [deployments, setDeployments] = useState([]);
   const [toasts, setToasts] = useState([]);
 
   const [detailsModal, setDetailsModal] = useState({
@@ -114,6 +114,8 @@ export default function App() {
         target_column: "",
         datasets: [],
         columns: [],
+        status: "idle",
+        statusMessage: "Waiting for dataset",
         onChange: (key, value) => updateNodeData("node_1", key, value),
       },
     },
@@ -123,6 +125,8 @@ export default function App() {
       position: { x: 120, y: 380 },
       data: {
         time_budget: 30,
+        status: "idle",
+        statusMessage: "Waiting for training",
         onChange: (key, value) => updateNodeData("node_2", key, value),
       },
     },
@@ -164,6 +168,44 @@ export default function App() {
         text,
       },
     ]);
+  }, []);
+
+  const setNodeStatusByType = useCallback(
+    (nodeType, status, statusMessage = "") => {
+      setNodes((currentNodes) =>
+        currentNodes.map((node) =>
+          node.type === nodeType
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  status,
+                  statusMessage,
+                },
+              }
+            : node
+        )
+      );
+    },
+    []
+  );
+
+  const resetNodeStatuses = useCallback(() => {
+    setNodes((currentNodes) =>
+      currentNodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          status: "idle",
+          statusMessage:
+            node.type === "dataLoader"
+              ? "Waiting for dataset"
+              : node.type === "automl"
+              ? "Waiting for training"
+              : "",
+        },
+      }))
+    );
   }, []);
 
   const onNodesChange = useCallback((changes) => {
@@ -216,40 +258,40 @@ export default function App() {
   };
 
   const refreshRegistry = async () => {
-  const [
-    experimentResponse,
-    modelResponse,
-    predictionResponse,
-    pipelineResponse,
-    deploymentResponse,
-  ] = await Promise.allSettled([
-    api.get("/experiments"),
-    api.get("/models"),
-    api.get("/predictions"),
-    api.get("/pipelines"),
-    api.get("/deployments"),
-  ]);
+    const [
+      experimentResponse,
+      modelResponse,
+      predictionResponse,
+      pipelineResponse,
+      deploymentResponse,
+    ] = await Promise.allSettled([
+      api.get("/experiments"),
+      api.get("/models"),
+      api.get("/predictions"),
+      api.get("/pipelines"),
+      api.get("/deployments"),
+    ]);
 
-  if (experimentResponse.status === "fulfilled") {
-    setExperiments(experimentResponse.value.data.experiments || []);
-  }
+    if (experimentResponse.status === "fulfilled") {
+      setExperiments(experimentResponse.value.data.experiments || []);
+    }
 
-  if (modelResponse.status === "fulfilled") {
-    setModels(modelResponse.value.data.models || []);
-  }
+    if (modelResponse.status === "fulfilled") {
+      setModels(modelResponse.value.data.models || []);
+    }
 
-  if (predictionResponse.status === "fulfilled") {
-    setPredictions(predictionResponse.value.data.predictions || []);
-  }
+    if (predictionResponse.status === "fulfilled") {
+      setPredictions(predictionResponse.value.data.predictions || []);
+    }
 
-  if (pipelineResponse.status === "fulfilled") {
-    setPipelines(pipelineResponse.value.data.pipelines || []);
-  }
+    if (pipelineResponse.status === "fulfilled") {
+      setPipelines(pipelineResponse.value.data.pipelines || []);
+    }
 
-  if (deploymentResponse.status === "fulfilled") {
-    setDeployments(deploymentResponse.value.data.deployments || []);
-  }
-};
+    if (deploymentResponse.status === "fulfilled") {
+      setDeployments(deploymentResponse.value.data.deployments || []);
+    }
+  };
 
   const refreshAll = async () => {
     await refreshHealth();
@@ -436,6 +478,8 @@ export default function App() {
             target_column: node.data?.target_column || "",
             datasets,
             columns,
+            status: "idle",
+            statusMessage: "Loaded from saved pipeline",
             onChange: (key, value) => {
               if (key === "dataset_id") {
                 setSelectedDatasetId(value);
@@ -454,6 +498,8 @@ export default function App() {
           position: node.position || { x: 120, y: 380 },
           data: {
             time_budget: node.data?.time_budget || 30,
+            status: "idle",
+            statusMessage: "Loaded from saved pipeline",
             onChange: (key, value) => updateNodeData(node.id, key, value),
           },
         };
@@ -461,7 +507,11 @@ export default function App() {
 
       return {
         ...node,
-        data: node.data || {},
+        data: {
+          ...(node.data || {}),
+          status: "idle",
+          statusMessage: "Loaded from saved pipeline",
+        },
       };
     });
   };
@@ -530,7 +580,16 @@ export default function App() {
 
     ws.onmessage = async (event) => {
       const data = JSON.parse(event.data);
+
       setTaskStatus(data.status);
+
+      if (data.status === "PROGRESS") {
+        setNodeStatusByType(
+          "automl",
+          "running",
+          data.message || "Training in progress"
+        );
+      }
 
       if (data.message) {
         addLog(`${data.status}: ${data.message}`);
@@ -543,6 +602,9 @@ export default function App() {
         setSelectedModelId(data.result?.best_model_id || "");
         setIsRunning(false);
         setConsoleCollapsed(false);
+
+        setNodeStatusByType("dataLoader", "success", "Completed");
+        setNodeStatusByType("automl", "success", "Model trained successfully");
 
         pushToast(
           "success",
@@ -558,6 +620,8 @@ export default function App() {
 
         setIsRunning(false);
         setConsoleCollapsed(false);
+
+        setNodeStatusByType("automl", "error", data.error || "Training failed");
 
         pushToast(
           "error",
@@ -575,6 +639,7 @@ export default function App() {
 
     ws.onerror = () => {
       addLog("WebSocket error");
+      setNodeStatusByType("automl", "error", "WebSocket error");
       pushToast("error", "WebSocket error", "Could not read live task updates.");
     };
   };
@@ -585,6 +650,10 @@ export default function App() {
     setTaskStatus("STARTING");
     setFinalResult(null);
     setConsoleCollapsed(false);
+
+    resetNodeStatuses();
+    setNodeStatusByType("dataLoader", "running", "Validating dataset");
+    setNodeStatusByType("automl", "idle", "Waiting for data loader");
 
     try {
       const payload = {
@@ -598,6 +667,9 @@ export default function App() {
       const taskId = response.data.final_state?.task_id;
 
       addLog("Backend accepted graph");
+
+      setNodeStatusByType("dataLoader", "success", "Dataset accepted");
+      setNodeStatusByType("automl", "running", "Training task queued");
 
       const backendLogs = response.data.log || [];
       backendLogs.forEach((entry) => addLog(entry));
@@ -614,6 +686,9 @@ export default function App() {
       addLog(`Pipeline error: ${message}`);
       setIsRunning(false);
       setTaskStatus("FAILURE");
+
+      setNodeStatusByType("dataLoader", "error", "Pipeline validation failed");
+      setNodeStatusByType("automl", "error", message);
 
       pushToast("error", "Pipeline failed", message);
     }
@@ -711,7 +786,14 @@ export default function App() {
             onSelectModel={setSelectedModelId}
             onDone={refreshRegistry}
           />
+
           <DriftPanel models={models} datasets={datasets} />
+
+          <DeploymentPanel
+            models={models}
+            deployments={deployments}
+            onRefresh={refreshRegistry}
+          />
         </aside>
 
         <main className="relative flex flex-grow flex-col overflow-hidden">
