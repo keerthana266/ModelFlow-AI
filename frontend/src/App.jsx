@@ -28,6 +28,7 @@ import DetailsModal from "./components/DetailsModal";
 import ExecutionConsole from "./components/ExecutionConsole";
 import ToastStack from "./components/ToastStack";
 import DriftPanel from "./components/DriftPanel";
+import DeploymentPanel from "./components/DeploymentPanel";
 
 const nodeTypes = {
   dataLoader: DataLoaderNode,
@@ -77,6 +78,7 @@ export default function App() {
   const [finalResult, setFinalResult] = useState(null);
 
   const [consoleCollapsed, setConsoleCollapsed] = useState(false);
+  const [deployments, setDeployments] = useState([]);
   const [toasts, setToasts] = useState([]);
 
   const [detailsModal, setDetailsModal] = useState({
@@ -214,34 +216,40 @@ export default function App() {
   };
 
   const refreshRegistry = async () => {
-    const [
-      experimentResponse,
-      modelResponse,
-      predictionResponse,
-      pipelineResponse,
-    ] = await Promise.allSettled([
-      api.get("/experiments"),
-      api.get("/models"),
-      api.get("/predictions"),
-      api.get("/pipelines"),
-    ]);
+  const [
+    experimentResponse,
+    modelResponse,
+    predictionResponse,
+    pipelineResponse,
+    deploymentResponse,
+  ] = await Promise.allSettled([
+    api.get("/experiments"),
+    api.get("/models"),
+    api.get("/predictions"),
+    api.get("/pipelines"),
+    api.get("/deployments"),
+  ]);
 
-    if (experimentResponse.status === "fulfilled") {
-      setExperiments(experimentResponse.value.data.experiments || []);
-    }
+  if (experimentResponse.status === "fulfilled") {
+    setExperiments(experimentResponse.value.data.experiments || []);
+  }
 
-    if (modelResponse.status === "fulfilled") {
-      setModels(modelResponse.value.data.models || []);
-    }
+  if (modelResponse.status === "fulfilled") {
+    setModels(modelResponse.value.data.models || []);
+  }
 
-    if (predictionResponse.status === "fulfilled") {
-      setPredictions(predictionResponse.value.data.predictions || []);
-    }
+  if (predictionResponse.status === "fulfilled") {
+    setPredictions(predictionResponse.value.data.predictions || []);
+  }
 
-    if (pipelineResponse.status === "fulfilled") {
-      setPipelines(pipelineResponse.value.data.pipelines || []);
-    }
-  };
+  if (pipelineResponse.status === "fulfilled") {
+    setPipelines(pipelineResponse.value.data.pipelines || []);
+  }
+
+  if (deploymentResponse.status === "fulfilled") {
+    setDeployments(deploymentResponse.value.data.deployments || []);
+  }
+};
 
   const refreshAll = async () => {
     await refreshHealth();
