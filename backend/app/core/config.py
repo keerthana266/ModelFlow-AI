@@ -1,10 +1,12 @@
 # app/core/config.py
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/automl_forge"
+    DATABASE_URL: str = (
+        "postgresql+psycopg2://postgres:postgres@localhost:5432/automl_forge"
+    )
 
     REDIS_BROKER_URL: str = "redis://localhost:6379/0"
     REDIS_BACKEND_URL: str = "redis://localhost:6379/1"
@@ -16,10 +18,13 @@ class Settings(BaseSettings):
     MLFLOW_TRACKING_URI: str = "http://127.0.0.1:5000"
     MLFLOW_EXPERIMENT_NAME: str = "AutoML Forge"
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        extra="ignore",
-    )
+    ARTIFACT_STORE_BACKEND: str = "local"
+
+    S3_ENDPOINT_URL: str = "http://127.0.0.1:9000"
+    S3_ACCESS_KEY_ID: str = "minioadmin"
+    S3_SECRET_ACCESS_KEY: str = "minioadmin"
+    S3_BUCKET_NAME: str = "automl-forge"
+    S3_REGION_NAME: str = "us-east-1"
 
     @property
     def cors_origins_list(self) -> list[str]:
@@ -28,6 +33,10 @@ class Settings(BaseSettings):
             for origin in self.CORS_ORIGINS.split(",")
             if origin.strip()
         ]
+
+    class Config:
+        env_file = ".env"
+        extra = "ignore"
 
 
 settings = Settings()

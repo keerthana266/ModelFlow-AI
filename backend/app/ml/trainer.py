@@ -36,6 +36,12 @@ from sklearn.model_selection import (
     cross_val_score,
     train_test_split,
 )
+
+from app.services.artifact_store import (
+    upload_experiment_artifact,
+    upload_model_artifact,
+)
+
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
 
@@ -521,6 +527,68 @@ def log_training_run_to_mlflow(
 
 
 def save_training_result_to_database(result: dict, model_path: str) -> None:
+    model_id = result["best_model_id"]
+    experiment_id = result["experiment_id"]
+
+    artifact_store_info = {
+        "enabled": False,
+        "backend": "local",
+    }
+
+    try:
+        model_artifact = upload_model_artifact(
+            local_model_path=model_path,
+            experiment_id=experiment_id,
+            model_id=model_id,
+        )
+
+        artifact_store_info = {
+            "enabled": model_artifact.get("enabled", False),
+            "backend": model_artifact.get("backend", "minio"),
+            "model_artifact": model_artifact,
+        }
+
+        result["artifact_store"] = artifact_store_info
+
+        try:
+            model_package = joblib.load(model_path)
+            model_package["artifact_store"] = artifact_store_info
+            joblib.dump(model_package, model_path)
+
+            refreshed_model_artifact = upload_model_artifact(
+                local_model_path=model_path,
+                experiment_id=experiment_id,
+                model_id=model_id,
+            )
+
+            artifact_store_info["model_artifact"] = refreshed_model_artifact
+            result["artifact_store"] = artifact_store_info
+
+        except Exception as package_error:
+            artifact_store_info["model_package_metadata_error"] = str(package_error)
+            result["artifact_store"] = artifact_store_info
+
+        experiment_artifact = upload_experiment_artifact(
+            result=result,
+            experiment_id=experiment_id,
+        )
+
+        artifact_store_info["experiment_artifact"] = experiment_artifact
+        result["artifact_store"] = artifact_store_info
+
+        save_experiment_result(experiment_id, result)
+
+    except Exception as artifact_error:
+        artifact_store_info = {
+            "enabled": True,
+            "backend": "minio",
+            "status": "failed",
+            "error": str(artifact_error),
+        }
+
+        result["artifact_store"] = artifact_store_info
+        save_experiment_result(experiment_id, result)
+
     db = SessionLocal()
 
     try:

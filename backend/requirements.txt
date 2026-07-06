@@ -11,14 +11,15 @@ redis
 
 pandas
 numpy
+scipy
 scikit-learn
 joblib
 
 flaml[automl]
 shap
+optuna
 
 mlflow
-
 evidently==0.6.7
 
-optuna
+boto3

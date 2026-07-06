@@ -20,6 +20,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from app.services.artifact_store import get_artifact_store_status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import text
@@ -201,6 +202,10 @@ def health_check():
         "service": "automl-forge-api",
     }
 
+
+@app.get("/storage/health")
+def storage_health():
+    return get_artifact_store_status()
 
 @app.post("/datasets/upload")
 def upload_dataset(
@@ -543,6 +548,17 @@ def get_model_details(
     if not model:
         raise HTTPException(status_code=404, detail="Model not found.")
 
+    artifact_store = {}
+
+    try:
+        model_package = joblib.load(model.model_path)
+        artifact_store = model_package.get("artifact_store", {})
+    except Exception as error:
+        artifact_store = {
+            "status": "unavailable",
+            "error": str(error),
+        }
+
     return {
         "model_id": model.model_id,
         "experiment_id": model.experiment_id,
@@ -556,6 +572,7 @@ def get_model_details(
         "numerical_columns": model.numerical_columns,
         "categorical_columns": model.categorical_columns,
         "input_schema": build_input_schema(model),
+        "artifact_store": artifact_store,
         "created_at": model.created_at,
     }
 
