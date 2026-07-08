@@ -20,6 +20,7 @@ import { api, WS_BASE_URL } from "./api";
 
 import AutoMLNode from "./components/AutoMLNode";
 import DataLoaderNode from "./components/DataLoaderNode";
+import DeployNode from "./components/DeployNode";
 import GenericPipelineNode from "./components/GenericPipelineNode";
 import NodePalette, { NODE_TEMPLATES } from "./components/NodePalette";
 
@@ -41,7 +42,7 @@ const nodeTypes = {
   explainer: GenericPipelineNode,
   mlflow: GenericPipelineNode,
   drift: GenericPipelineNode,
-  deploy: GenericPipelineNode,
+  deploy: DeployNode,
 };
 
 const edgeStyle = {
@@ -114,6 +115,16 @@ function findTemplate(type) {
   return NODE_TEMPLATES.find((template) => template.type === type);
 }
 
+function sanitizeDeploymentName(value) {
+  const cleaned = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return cleaned || "automl-model-api";
+}
+
 export default function App() {
   const wsRef = useRef(null);
   const reactFlowWrapperRef = useRef(null);
@@ -164,6 +175,25 @@ export default function App() {
     );
   }, []);
 
+  const updateNodeDataByType = useCallback((nodeType, patch) => {
+    setNodes((currentNodes) =>
+      currentNodes.map((node) => {
+        if (node.type !== nodeType) return node;
+
+        const patchValue =
+          typeof patch === "function" ? patch(node.data || {}) : patch;
+
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            ...patchValue,
+          },
+        };
+      })
+    );
+  }, []);
+
   const createNodeFromTemplate = useCallback(
     (template, position) => {
       const id = `${template.type}_${Date.now().toString(16)}_${Math.random()
@@ -197,6 +227,24 @@ export default function App() {
             tuning_mode: "flaml",
             status: "idle",
             statusMessage: "Waiting for training",
+            onChange: (key, value) => updateNodeData(id, key, value),
+          },
+        };
+      }
+
+      if (template.type === "deploy") {
+        return {
+          id,
+          type: "deploy",
+          position,
+          data: {
+            deployment_name: "automl-model-api",
+            environment: "production",
+            auto_deploy: true,
+            activate: true,
+            status: "idle",
+            statusMessage: "Ready after training",
+            lastDeployment: null,
             onChange: (key, value) => updateNodeData(id, key, value),
           },
         };
@@ -322,13 +370,14 @@ export default function App() {
       type: "deploy",
       position: { x: 2900, y: 80 },
       data: {
-        label: "Deploy API",
-        description: "Deploy model as versioned REST API",
-        icon: "rocket",
-        color: "rose",
-        nodeType: "deploy",
+        deployment_name: "automl-model-api",
+        environment: "production",
+        auto_deploy: true,
+        activate: true,
         status: "idle",
         statusMessage: "Ready after training",
+        lastDeployment: null,
+        onChange: (key, value) => updateNodeData("node_deploy", key, value),
       },
     },
   ]);
@@ -408,6 +457,8 @@ export default function App() {
               : node.type === "deploy"
               ? "Ready after training"
               : "Waiting",
+          lastDeployment:
+            node.type === "deploy" ? null : node.data?.lastDeployment,
         },
       }))
     );
@@ -447,6 +498,86 @@ export default function App() {
     },
     [setNodeStatusByType]
   );
+
+  const autoDeployModel = async (trainingResult) => {
+    const deployNode = nodes.find((node) => node.type === "deploy");
+
+    if (!deployNode) return;
+
+    const deployData = deployNode.data || {};
+
+    if (deployData.auto_deploy === false) {
+      updateNodeDataByType("deploy", {
+        status: "idle",
+        statusMessage: "Auto deploy disabled",
+      });
+      addLog("Deploy node skipped: auto deploy disabled");
+      return;
+    }
+
+    const modelId = trainingResult?.best_model_id;
+
+    if (!modelId) {
+      updateNodeDataByType("deploy", {
+        status: "error",
+        statusMessage: "No trained model ID found",
+      });
+      addLog("Deploy node failed: no trained model ID found");
+      return;
+    }
+
+    const targetColumn = trainingResult?.target_column || "model";
+    const defaultName = `${targetColumn}-api`;
+    const deploymentName = sanitizeDeploymentName(
+      deployData.deployment_name || defaultName
+    );
+
+    const environment = deployData.environment || "production";
+    const activate = deployData.activate !== false;
+
+    try {
+      updateNodeDataByType("deploy", {
+        status: "running",
+        statusMessage: "Creating REST API deployment",
+        lastDeployment: null,
+      });
+
+      addLog(`Deploy node: creating deployment '${deploymentName}'`);
+
+      const response = await api.post("/deployments", {
+        model_id: modelId,
+        deployment_name: deploymentName,
+        environment,
+        activate,
+      });
+
+      updateNodeDataByType("deploy", {
+        status: "success",
+        statusMessage: `Deployment v${response.data.version} created`,
+        lastDeployment: response.data,
+      });
+
+      addLog(
+        `Deploy node completed: ${response.data.versioned_endpoint_path || response.data.endpoint_path}`
+      );
+
+      pushToast(
+        "success",
+        "Deployment created",
+        `${deploymentName} v${response.data.version}`
+      );
+    } catch (error) {
+      const message = error.response?.data?.detail || error.message;
+
+      updateNodeDataByType("deploy", {
+        status: "error",
+        statusMessage: message,
+      });
+
+      addLog(`Deploy node failed: ${message}`);
+      pushToast("error", "Deployment failed", message);
+    }
+  };
 
   const onNodesChange = useCallback((changes) => {
     setNodes((currentNodes) => applyNodeChanges(changes, currentNodes));
@@ -709,6 +840,22 @@ export default function App() {
     );
   }, [updateNodeData]);
 
+  useEffect(() => {
+    setNodes((currentNodes) =>
+      currentNodes.map((node) => {
+        if (node.type !== "deploy") return node;
+
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            onChange: (key, value) => updateNodeData(node.id, key, value),
+          },
+        };
+      })
+    );
+  }, [updateNodeData]);
+
   const cleanNodesForBackend = () => {
     return nodes.map((node) => {
       if (node.type === "dataLoader") {
@@ -731,6 +878,20 @@ export default function App() {
           data: {
             time_budget: Number(node.data.time_budget || 30),
             tuning_mode: node.data.tuning_mode || "flaml",
+          },
+        };
+      }
+
+      if (node.type === "deploy") {
+        return {
+          id: node.id,
+          type: node.type,
+          position: node.position,
+          data: {
+            deployment_name: node.data.deployment_name || "automl-model-api",
+            environment: node.data.environment || "production",
+            auto_deploy: node.data.auto_deploy !== false,
+            activate: node.data.activate !== false,
           },
         };
       }
@@ -790,6 +951,24 @@ export default function App() {
             tuning_mode: node.data?.tuning_mode || "flaml",
             status: "idle",
             statusMessage: "Loaded from saved pipeline",
+            onChange: (key, value) => updateNodeData(node.id, key, value),
+          },
+        };
+      }
+
+      if (node.type === "deploy") {
+        return {
+          ...node,
+          position: node.position || { x: 2900, y: 80 },
+          data: {
+            deployment_name:
+              node.data?.deployment_name || "automl-model-api",
+            environment: node.data?.environment || "production",
+            auto_deploy: node.data?.auto_deploy !== false,
+            activate: node.data?.activate !== false,
+            status: "idle",
+            statusMessage: "Loaded from saved pipeline",
+            lastDeployment: null,
             onChange: (key, value) => updateNodeData(node.id, key, value),
           },
         };
@@ -907,7 +1086,7 @@ export default function App() {
         setNodeStatusByType("explainer", "success", "SHAP generated");
         setNodeStatusByType("mlflow", "success", "Experiment logged");
         setNodeStatusByType("drift", "idle", "Run drift check after training");
-        setNodeStatusByType("deploy", "idle", "Ready for deployment");
+        setNodeStatusByType("deploy", "running", "Preparing deployment");
 
         pushToast(
           "success",
@@ -915,6 +1094,7 @@ export default function App() {
           "A new model was added to the model registry."
         );
 
+        await autoDeployModel(data.result);
         await refreshRegistry();
       }
 
@@ -925,6 +1105,7 @@ export default function App() {
         setConsoleCollapsed(false);
 
         setNodeStatusByType("automl", "error", data.error || "Training failed");
+        setNodeStatusByType("deploy", "idle", "Training failed");
 
         pushToast(
           "error",
