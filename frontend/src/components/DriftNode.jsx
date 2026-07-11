@@ -1,4 +1,5 @@
 import React from "react";
+import { api } from "../api";
 import { Handle, Position } from "reactflow";
 import {
   Activity,
@@ -183,13 +184,7 @@ export default function DriftNode({ data }) {
             {report.report_url && (
               <button
                 type="button"
-                onClick={() =>
-                  window.open(
-                    report.report_url,
-                    "_blank",
-                    "noopener,noreferrer"
-                  )
-                }
+                onClick={() => openProtectedReport(report.report_url)}
                 className="nodrag mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm transition hover:bg-slate-950 hover:text-white"
               >
                 <ExternalLink size={13} />
@@ -214,6 +209,34 @@ export default function DriftNode({ data }) {
       />
     </div>
   );
+}
+
+
+async function openProtectedReport(reportUrl) {
+  const reportWindow = window.open("", "_blank");
+
+  try {
+    const response = await api.get(reportUrl, {
+      responseType: "blob",
+    });
+
+    const objectUrl = URL.createObjectURL(response.data);
+
+    if (reportWindow) {
+      reportWindow.location.href = objectUrl;
+    } else {
+      window.location.href = objectUrl;
+    }
+
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+  } catch (error) {
+    reportWindow?.close();
+    window.alert(
+      error.response?.data?.detail ||
+        error.message ||
+        "Could not open the drift report."
+    );
+  }
 }
 
 function StatusIcon({ status }) {

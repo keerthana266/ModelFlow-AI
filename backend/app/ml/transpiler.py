@@ -1,5 +1,3 @@
-# app/ml/transpiler.py
-
 from typing import Any, Dict, List
 
 from app.ml.trainer import train_automl
@@ -47,12 +45,17 @@ def find_next_node_id(current_node_id: str, edges: List[Dict[str, Any]]) -> str 
     return outgoing_edges[0]["target"]
 
 
-def execute_pipeline_graph(nodes: list, edges: list) -> dict:
+def execute_pipeline_graph(
+    nodes: list,
+    edges: list,
+    *,
+    owner_id: str | None = None,
+    project_id: str | None = None,
+) -> dict:
     if not nodes:
         raise ValueError("Pipeline must contain at least one node.")
 
     node_map = {node["id"]: node for node in nodes}
-
     current_node_id = find_root_node(nodes, edges)
     visited_nodes = set()
 
@@ -64,7 +67,6 @@ def execute_pipeline_graph(nodes: list, edges: list) -> dict:
             raise ValueError("Invalid pipeline: cycle detected.")
 
         visited_nodes.add(current_node_id)
-
         node = node_map.get(current_node_id)
 
         if not node:
@@ -86,7 +88,6 @@ def execute_pipeline_graph(nodes: list, edges: list) -> dict:
                 raise ValueError("Data Loader node is missing target_column.")
 
             dataset_path = get_dataset_path(dataset_id)
-
             pipeline_state["dataset_id"] = dataset_id
             pipeline_state["dataset_path"] = str(dataset_path)
             pipeline_state["target_column"] = target_column
@@ -101,15 +102,15 @@ def execute_pipeline_graph(nodes: list, edges: list) -> dict:
             if not dataset_path or not target_column:
                 raise ValueError("AutoML node cannot run before Data Loader node.")
 
-            time_budget = int(node_data.get("time_budget", 30))
-            time_budget = max(10, min(time_budget, 300))
-
+            time_budget = max(10, min(int(node_data.get("time_budget", 30)), 300))
             tuning_mode = node_data.get("tuning_mode", "flaml")
 
             if tuning_mode not in ["flaml", "optuna"]:
                 raise ValueError("Invalid tuning_mode. Use 'flaml' or 'optuna'.")
 
-            execution_log.append(f"-> Triggering AutoML training for target: {target_column}")
+            execution_log.append(
+                f"-> Triggering AutoML training for target: {target_column}"
+            )
             execution_log.append(f"-> Training mode: {tuning_mode}")
             execution_log.append(f"-> Time budget: {time_budget} seconds")
 
@@ -118,12 +119,15 @@ def execute_pipeline_graph(nodes: list, edges: list) -> dict:
                 target_column,
                 time_budget,
                 tuning_mode,
+                owner_id,
+                project_id,
             )
 
             pipeline_state["task_id"] = task.id
             pipeline_state["model_status"] = "Training Initiated"
             pipeline_state["time_budget"] = time_budget
             pipeline_state["tuning_mode"] = tuning_mode
+            pipeline_state["project_id"] = project_id
 
             execution_log.append(f"-> Background Celery task queued: {task.id}")
 

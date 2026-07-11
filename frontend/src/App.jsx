@@ -16,7 +16,12 @@ import {
   Workflow,
 } from "lucide-react";
 
-import { api, WS_BASE_URL } from "./api";
+import {
+  api,
+  PROJECT_STORAGE_KEY,
+  TOKEN_STORAGE_KEY,
+  WS_BASE_URL,
+} from "./api";
 
 import AutoMLNode from "./components/AutoMLNode";
 import DataLoaderNode from "./components/DataLoaderNode";
@@ -34,6 +39,8 @@ import ResultsDashboard from "./components/ResultsDashboard";
 import DetailsModal from "./components/DetailsModal";
 import ExecutionConsole from "./components/ExecutionConsole";
 import ToastStack from "./components/ToastStack";
+import ProjectSelector from "./components/ProjectSelector";
+import UserMenu from "./components/UserMenu";
 
 const nodeTypes = {
   dataLoader: DataLoaderNode,
@@ -164,12 +171,15 @@ function normalizeDriftReport(payload = {}) {
     payload.summary?.share_of_drifted_columns ??
     null;
 
-  const reportUrl =
+  const rawReportUrl =
+    payload.html_report_url ||
     payload.html_url ||
     payload.report_url ||
-    (reportId
-      ? `${api.defaults.baseURL}/monitoring/drift/${reportId}/html`
-      : "");
+    (reportId ? `/monitoring/drift/${reportId}/html` : "");
+
+  const reportUrl = rawReportUrl.startsWith("http")
+    ? rawReportUrl
+    : `${api.defaults.baseURL}${rawReportUrl}`;
 
   return {
     ...payload,
@@ -1315,7 +1325,14 @@ export default function App() {
       wsRef.current.close();
     }
 
-    const ws = new WebSocket(`${WS_BASE_URL}/ws/task/${taskId}`);
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY) || "";
+    const projectId = localStorage.getItem(PROJECT_STORAGE_KEY) || "";
+    const wsUrl =
+      `${WS_BASE_URL}/ws/task/${taskId}` +
+      `?token=${encodeURIComponent(token)}` +
+      `&project_id=${encodeURIComponent(projectId)}`;
+
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -1499,6 +1516,8 @@ export default function App() {
             <Server size={13} />
             Backend {backendHealth}
           </div>
+
+          <ProjectSelector />
         </div>
 
         <div className="flex items-center gap-2">
@@ -1526,6 +1545,8 @@ export default function App() {
             )}
             {isRunning ? "Executing..." : "Run Pipeline"}
           </button>
+
+          <UserMenu />
         </div>
       </nav>
 

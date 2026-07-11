@@ -1,5 +1,3 @@
-# app/core/config.py
-
 from pydantic_settings import BaseSettings
 
 
@@ -12,19 +10,21 @@ class Settings(BaseSettings):
     REDIS_BACKEND_URL: str = "redis://localhost:6379/1"
 
     CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
-
     MAX_UPLOAD_MB: int = 50
 
     MLFLOW_TRACKING_URI: str = "http://127.0.0.1:5000"
     MLFLOW_EXPERIMENT_NAME: str = "AutoML Forge"
 
     ARTIFACT_STORE_BACKEND: str = "local"
-
     S3_ENDPOINT_URL: str = "http://127.0.0.1:9000"
     S3_ACCESS_KEY_ID: str = "minioadmin"
     S3_SECRET_ACCESS_KEY: str = "minioadmin"
     S3_BUCKET_NAME: str = "automl-forge"
     S3_REGION_NAME: str = "us-east-1"
+
+    JWT_SECRET_KEY: str = "replace-this-with-a-long-random-secret"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
 
     @property
     def cors_origins_list(self) -> list[str]:

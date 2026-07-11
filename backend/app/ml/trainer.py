@@ -48,6 +48,7 @@ from sklearn.preprocessing import FunctionTransformer
 from app.core.config import settings
 from app.db import models
 from app.db.database import Base, SessionLocal, engine
+from app.db.migrations import ensure_project_scope_columns
 from app.ml.detector import detect_problem_type
 from app.ml.drift import save_reference_data
 from app.ml.preprocessor import build_preprocessor, get_column_groups
@@ -449,6 +450,8 @@ def log_training_run_to_mlflow(
             mlflow.set_tag("run_type", "automl_training")
             mlflow.set_tag("training_status", "completed")
             mlflow.set_tag("tuning_mode", result.get("tuning_mode", "flaml"))
+            mlflow.set_tag("automl_owner_id", result.get("owner_id") or "legacy")
+            mlflow.set_tag("automl_project_id", result.get("project_id") or "legacy")
 
             mlflow.log_params(
                 {
@@ -593,11 +596,14 @@ def save_training_result_to_database(result: dict, model_path: str) -> None:
 
     try:
         Base.metadata.create_all(bind=engine)
+        ensure_project_scope_columns()
 
         best_model = result["leaderboard"][0]
 
         experiment_record = models.ExperimentResult(
             experiment_id=result["experiment_id"],
+            owner_id=result.get("owner_id"),
+            project_id=result.get("project_id"),
             problem_type=result["problem_type"],
             target_column=result["target_column"],
             rows_used=result["rows_used"],
@@ -610,6 +616,8 @@ def save_training_result_to_database(result: dict, model_path: str) -> None:
 
         model_record = models.TrainedModel(
             model_id=result["best_model_id"],
+            owner_id=result.get("owner_id"),
+            project_id=result.get("project_id"),
             experiment_id=result["experiment_id"],
             model_name=best_model["model_name"],
             problem_type=result["problem_type"],
@@ -642,6 +650,8 @@ def train_automl(
     target_column: str,
     time_budget: int = 30,
     tuning_mode: str = "flaml",
+    owner_id: str | None = None,
+    project_id: str | None = None,
 ) -> dict:
     time_budget = max(10, min(int(time_budget), 300))
 
@@ -823,6 +833,8 @@ def train_automl(
         "tuning_mode": tuning_mode,
         "optuna_info": optuna_info,
         "reference_data_path": str(reference_data_path),
+        "owner_id": owner_id,
+        "project_id": project_id,
         "created_at": utc_now_iso(),
     }
 
@@ -863,6 +875,8 @@ def train_automl(
         "time_budget": time_budget,
         "tuning_mode": tuning_mode,
         "optuna_info": optuna_info,
+        "owner_id": owner_id,
+        "project_id": project_id,
         "created_at": utc_now_iso(),
     }
 

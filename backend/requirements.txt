@@ -5,6 +5,10 @@ python-multipart
 sqlalchemy
 psycopg2-binary
 pydantic-settings
+email-validator
+
+PyJWT
+pwdlib[argon2]
 
 celery
 redis

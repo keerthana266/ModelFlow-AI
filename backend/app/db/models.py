@@ -1,4 +1,5 @@
-# app/db/models.py
+from datetime import datetime
+import uuid
 
 from sqlalchemy import (
     Boolean,
@@ -10,20 +11,60 @@ from sqlalchemy import (
     String,
     Text,
 )
-from datetime import datetime
-import uuid
-
-from sqlalchemy import Column, DateTime, Float, Integer, JSON, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
 from app.db.database import Base
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    user_id = Column(String, primary_key=True, index=True)
+    name = Column(String(120), nullable=False)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    password_hash = Column(Text, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class Project(Base):
+    __tablename__ = "projects"
+
+    project_id = Column(String, primary_key=True, index=True)
+    owner_id = Column(String, index=True, nullable=False)
+    name = Column(String(160), nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class TaskRun(Base):
+    __tablename__ = "task_runs"
+
+    task_id = Column(String, primary_key=True, index=True)
+    owner_id = Column(String, index=True, nullable=False)
+    project_id = Column(String, index=True, nullable=False)
+    task_type = Column(String(60), nullable=False, default="training")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class DatasetRecord(Base):
     __tablename__ = "datasets"
 
     dataset_id = Column(String, primary_key=True, index=True)
+    owner_id = Column(String, index=True, nullable=True)
+    project_id = Column(String, index=True, nullable=True)
+
     original_filename = Column(String, nullable=False)
     file_path = Column(String, nullable=False)
 
@@ -42,6 +83,9 @@ class ExperimentResult(Base):
     __tablename__ = "experiment_results"
 
     experiment_id = Column(String, primary_key=True, index=True)
+    owner_id = Column(String, index=True, nullable=True)
+    project_id = Column(String, index=True, nullable=True)
+
     problem_type = Column(String, nullable=False)
     target_column = Column(String, nullable=False)
     rows_used = Column(Integer)
@@ -57,8 +101,10 @@ class TrainedModel(Base):
     __tablename__ = "trained_models"
 
     model_id = Column(String, primary_key=True, index=True)
-    experiment_id = Column(String, index=True, nullable=False)
+    owner_id = Column(String, index=True, nullable=True)
+    project_id = Column(String, index=True, nullable=True)
 
+    experiment_id = Column(String, index=True, nullable=False)
     model_name = Column(String, nullable=False)
     problem_type = Column(String, nullable=False)
     target_column = Column(String, nullable=False)
@@ -79,11 +125,12 @@ class PredictionLog(Base):
     __tablename__ = "prediction_logs"
 
     prediction_id = Column(String, primary_key=True, index=True)
-    model_id = Column(String, index=True, nullable=False)
+    owner_id = Column(String, index=True, nullable=True)
+    project_id = Column(String, index=True, nullable=True)
 
+    model_id = Column(String, index=True, nullable=False)
     input_data = Column(JSON, nullable=False)
     prediction = Column(JSON, nullable=False)
-
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -91,6 +138,9 @@ class PipelineGraph(Base):
     __tablename__ = "pipeline_graphs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    owner_id = Column(String, index=True, nullable=True)
+    project_id = Column(String, index=True, nullable=True)
+
     nodes = Column(JSON, nullable=False)
     edges = Column(JSON, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -100,6 +150,9 @@ class DriftReport(Base):
     __tablename__ = "drift_reports"
 
     report_id = Column(String, primary_key=True, index=True)
+    owner_id = Column(String, index=True, nullable=True)
+    project_id = Column(String, index=True, nullable=True)
+
     model_id = Column(String, index=True, nullable=False)
     experiment_id = Column(String, index=True, nullable=True)
     current_dataset_id = Column(String, index=True, nullable=True)
@@ -111,7 +164,6 @@ class DriftReport(Base):
 
     report_path = Column(Text, nullable=False)
     summary = Column(JSON, nullable=True)
-
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -119,15 +171,15 @@ class ModelDeployment(Base):
     __tablename__ = "model_deployments"
 
     deployment_id = Column(String, primary_key=True, index=True)
+    owner_id = Column(String, index=True, nullable=True)
+    project_id = Column(String, index=True, nullable=True)
 
     deployment_name = Column(String, index=True, nullable=False)
     model_id = Column(String, index=True, nullable=False)
     experiment_id = Column(String, index=True, nullable=True)
 
     version = Column(Integer, nullable=False)
-    environment = Column(String, default="production")  # development / staging / production
-    status = Column(String, default="active")  # active / inactive / archived
-
+    environment = Column(String, default="production")
+    status = Column(String, default="active")
     endpoint_path = Column(Text, nullable=False)
-
     created_at = Column(DateTime, default=datetime.utcnow)
