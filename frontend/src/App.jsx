@@ -21,6 +21,7 @@ import { api, WS_BASE_URL } from "./api";
 import AutoMLNode from "./components/AutoMLNode";
 import DataLoaderNode from "./components/DataLoaderNode";
 import DeployNode from "./components/DeployNode";
+import DriftNode from "./components/DriftNode";
 import GenericPipelineNode from "./components/GenericPipelineNode";
 import NodePalette, { NODE_TEMPLATES } from "./components/NodePalette";
 
@@ -41,7 +42,7 @@ const nodeTypes = {
   evaluator: GenericPipelineNode,
   explainer: GenericPipelineNode,
   mlflow: GenericPipelineNode,
-  drift: GenericPipelineNode,
+  drift: DriftNode,
   deploy: DeployNode,
 };
 
@@ -125,9 +126,64 @@ function sanitizeDeploymentName(value) {
   return cleaned || "automl-model-api";
 }
 
+function getApiErrorMessage(error) {
+  const detail = error.response?.data?.detail;
+
+  if (typeof detail === "string") {
+    return detail;
+  }
+
+  if (detail && typeof detail === "object") {
+    const messages = [];
+
+    if (detail.message) {
+      messages.push(detail.message);
+    }
+
+    if (Array.isArray(detail.errors)) {
+      messages.push(...detail.errors);
+    }
+
+    return messages.join(" ") || JSON.stringify(detail);
+  }
+
+  return error.message || "Something went wrong.";
+}
+
+function normalizeDriftReport(payload = {}) {
+  const reportId = payload.report_id || payload.id || "";
+  const driftDetected =
+    payload.dataset_drift ??
+    payload.drift_detected ??
+    payload.summary?.dataset_drift ??
+    false;
+
+  const driftShare =
+    payload.drift_share ??
+    payload.share_of_drifted_columns ??
+    payload.summary?.share_of_drifted_columns ??
+    null;
+
+  const reportUrl =
+    payload.html_url ||
+    payload.report_url ||
+    (reportId
+      ? `${api.defaults.baseURL}/monitoring/drift/${reportId}/html`
+      : "");
+
+  return {
+    ...payload,
+    report_id: reportId,
+    report_url: reportUrl,
+    drift_detected: Boolean(driftDetected),
+    drift_share: driftShare,
+  };
+}
+
 export default function App() {
   const wsRef = useRef(null);
   const reactFlowWrapperRef = useRef(null);
+  const nodesRef = useRef([]);
 
   const [reactFlowInstance, setReactFlowInstance] = useState(null);
 
@@ -143,6 +199,7 @@ export default function App() {
 
   const [selectedDatasetId, setSelectedDatasetId] = useState("");
   const [selectedModelId, setSelectedModelId] = useState("");
+  const [latestTrainedModelId, setLatestTrainedModelId] = useState("");
 
   const [isRunning, setIsRunning] = useState(false);
   const [logs, setLogs] = useState([]);
@@ -227,6 +284,24 @@ export default function App() {
             tuning_mode: "flaml",
             status: "idle",
             statusMessage: "Waiting for training",
+            onChange: (key, value) => updateNodeData(id, key, value),
+          },
+        };
+      }
+
+      if (template.type === "drift") {
+        return {
+          id,
+          type: "drift",
+          position,
+          data: {
+            datasets,
+            current_dataset_id: "",
+            auto_check: true,
+            max_rows: 1000,
+            status: "idle",
+            statusMessage: "Select current dataset",
+            lastReport: null,
             onChange: (key, value) => updateNodeData(id, key, value),
           },
         };
@@ -356,13 +431,14 @@ export default function App() {
       type: "drift",
       position: { x: 2500, y: 80 },
       data: {
-        label: "Drift Monitor",
-        description: "Compare current data with training data",
-        icon: "activity",
-        color: "orange",
-        nodeType: "drift",
+        datasets: [],
+        current_dataset_id: "",
+        auto_check: true,
+        max_rows: 1000,
         status: "idle",
-        statusMessage: "Run after training",
+        statusMessage: "Select current dataset",
+        lastReport: null,
+        onChange: (key, value) => updateNodeData("node_drift", key, value),
       },
     },
     {
@@ -453,12 +529,16 @@ export default function App() {
               : node.type === "automl"
               ? "Waiting for training"
               : node.type === "drift"
-              ? "Run after training"
+              ? node.data?.current_dataset_id
+                ? "Ready for drift check"
+                : "Select current dataset"
               : node.type === "deploy"
               ? "Ready after training"
               : "Waiting",
           lastDeployment:
             node.type === "deploy" ? null : node.data?.lastDeployment,
+          lastReport:
+            node.type === "drift" ? null : node.data?.lastReport,
         },
       }))
     );
@@ -499,8 +579,135 @@ export default function App() {
     [setNodeStatusByType]
   );
 
+  const runDriftCheckForNode = useCallback(
+    async (modelIdOverride = "") => {
+      const driftNode = nodesRef.current.find(
+        (node) => node.type === "drift"
+      );
+
+      if (!driftNode) {
+        return null;
+      }
+
+      const driftData = driftNode.data || {};
+      const modelId =
+        modelIdOverride || latestTrainedModelId || selectedModelId;
+      const currentDatasetId = driftData.current_dataset_id;
+      const maxRows = Math.max(
+        2,
+        Math.min(Number(driftData.max_rows || 1000), 10000)
+      );
+
+      if (!modelId) {
+        updateNodeDataByType("drift", {
+          status: "error",
+          statusMessage: "Train or select a model first",
+        });
+        addLog("Drift node failed: no model is available");
+        return null;
+      }
+
+      if (!currentDatasetId) {
+        updateNodeDataByType("drift", {
+          status: "idle",
+          statusMessage: "Select current dataset",
+        });
+        addLog("Drift node skipped: no current dataset selected");
+        return null;
+      }
+
+      try {
+        updateNodeDataByType("drift", {
+          status: "running",
+          statusMessage: "Generating Evidently drift report",
+          lastReport: null,
+        });
+
+        addLog(
+          `Drift node: comparing model ${modelId} with dataset ${currentDatasetId}`
+        );
+
+        const response = await api.post("/monitoring/drift", {
+          model_id: modelId,
+          current_dataset_id: currentDatasetId,
+          max_rows: maxRows,
+        });
+
+        const report = normalizeDriftReport(response.data);
+        const driftDetected = report.drift_detected;
+
+        updateNodeDataByType("drift", {
+          status: driftDetected ? "warning" : "success",
+          statusMessage: driftDetected
+            ? "Dataset drift detected"
+            : "No significant drift detected",
+          lastReport: report,
+        });
+
+        addLog(
+          `Drift node completed: ${
+            report.report_id || "report generated"
+          }`
+        );
+
+        pushToast(
+          driftDetected ? "warning" : "success",
+          driftDetected ? "Drift detected" : "Drift check complete",
+          report.report_id || "Evidently report generated"
+        );
+
+        return report;
+      } catch (error) {
+        const message = getApiErrorMessage(error);
+
+        updateNodeDataByType("drift", {
+          status: "error",
+          statusMessage: message,
+        });
+
+        addLog(`Drift node failed: ${message}`);
+        pushToast("error", "Drift check failed", message);
+
+        return null;
+      }
+    },
+    [
+      addLog,
+      latestTrainedModelId,
+      pushToast,
+      selectedModelId,
+      updateNodeDataByType,
+    ]
+  );
+
+  const autoRunDriftCheck = useCallback(
+    async (trainingResult) => {
+      const driftNode = nodesRef.current.find(
+        (node) => node.type === "drift"
+      );
+
+      if (!driftNode) {
+        return null;
+      }
+
+      if (driftNode.data?.auto_check === false) {
+        updateNodeDataByType("drift", {
+          status: "idle",
+          statusMessage: "Auto drift check disabled",
+        });
+        addLog("Drift node skipped: auto check disabled");
+        return null;
+      }
+
+      return runDriftCheckForNode(trainingResult?.best_model_id || "");
+    },
+    [addLog, runDriftCheckForNode, updateNodeDataByType]
+  );
+
   const autoDeployModel = async (trainingResult) => {
-    const deployNode = nodes.find((node) => node.type === "deploy");
+    const deployNode = nodesRef.current.find(
+      (node) => node.type === "deploy"
+    );
 
     if (!deployNode) return;
 
@@ -567,7 +774,7 @@ export default function App() {
         `${deploymentName} v${response.data.version}`
       );
     } catch (error) {
-      const message = error.response?.data?.detail || error.message;
+      const message = getApiErrorMessage(error);
 
       updateNodeDataByType("deploy", {
         status: "error",
@@ -782,6 +989,10 @@ export default function App() {
   };
 
   useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+
+  useEffect(() => {
     refreshAll();
 
     return () => {
@@ -843,6 +1054,31 @@ export default function App() {
   useEffect(() => {
     setNodes((currentNodes) =>
       currentNodes.map((node) => {
+        if (node.type !== "drift") return node;
+
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            datasets,
+            onChange: (key, value) => updateNodeData(node.id, key, value),
+            onRun: () => runDriftCheckForNode(),
+            canRun: Boolean(latestTrainedModelId || selectedModelId),
+          },
+        };
+      })
+    );
+  }, [
+    datasets,
+    latestTrainedModelId,
+    runDriftCheckForNode,
+    selectedModelId,
+    updateNodeData,
+  ]);
+
+  useEffect(() => {
+    setNodes((currentNodes) =>
+      currentNodes.map((node) => {
         if (node.type !== "deploy") return node;
 
         return {
@@ -878,6 +1114,19 @@ export default function App() {
           data: {
             time_budget: Number(node.data.time_budget || 30),
             tuning_mode: node.data.tuning_mode || "flaml",
+          },
+        };
+      }
+
+      if (node.type === "drift") {
+        return {
+          id: node.id,
+          type: node.type,
+          position: node.position,
+          data: {
+            current_dataset_id: node.data.current_dataset_id || "",
+            auto_check: node.data.auto_check !== false,
+            max_rows: Number(node.data.max_rows || 1000),
           },
         };
       }
@@ -952,6 +1201,27 @@ export default function App() {
             status: "idle",
             statusMessage: "Loaded from saved pipeline",
             onChange: (key, value) => updateNodeData(node.id, key, value),
+          },
+        };
+      }
+
+      if (node.type === "drift") {
+        return {
+          ...node,
+          position: node.position || { x: 2500, y: 80 },
+          data: {
+            datasets,
+            current_dataset_id: node.data?.current_dataset_id || "",
+            auto_check: node.data?.auto_check !== false,
+            max_rows: node.data?.max_rows || 1000,
+            status: "idle",
+            statusMessage: node.data?.current_dataset_id
+              ? "Ready for drift check"
+              : "Select current dataset",
+            lastReport: null,
+            onChange: (key, value) => updateNodeData(node.id, key, value),
+            onRun: () => runDriftCheckForNode(),
+            canRun: Boolean(latestTrainedModelId || selectedModelId),
           },
         };
       }
@@ -1076,7 +1346,7 @@ export default function App() {
 
         setFinalResult(data.result);
         setSelectedModelId(data.result?.best_model_id || "");
-        setIsRunning(false);
+        setLatestTrainedModelId(data.result?.best_model_id || "");
         setConsoleCollapsed(false);
 
         setNodeStatusByType("dataLoader", "success", "Completed");
@@ -1085,8 +1355,8 @@ export default function App() {
         setNodeStatusByType("evaluator", "success", "Metrics calculated");
         setNodeStatusByType("explainer", "success", "SHAP generated");
         setNodeStatusByType("mlflow", "success", "Experiment logged");
-        setNodeStatusByType("drift", "idle", "Run drift check after training");
-        setNodeStatusByType("deploy", "running", "Preparing deployment");
+        setNodeStatusByType("drift", "running", "Preparing drift check");
+        setNodeStatusByType("deploy", "idle", "Waiting for drift step");
 
         pushToast(
           "success",
@@ -1094,8 +1364,11 @@ export default function App() {
           "A new model was added to the model registry."
         );
 
+        await autoRunDriftCheck(data.result);
         await autoDeployModel(data.result);
         await refreshRegistry();
+
+        setIsRunning(false);
       }
 
       if (data.status === "FAILURE") {
@@ -1105,6 +1378,7 @@ export default function App() {
         setConsoleCollapsed(false);
 
         setNodeStatusByType("automl", "error", data.error || "Training failed");
+        setNodeStatusByType("drift", "idle", "Training failed");
         setNodeStatusByType("deploy", "idle", "Training failed");
 
         pushToast(
