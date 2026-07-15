@@ -26,12 +26,23 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
 
+    MODEL_ZOO_ALLOWED_MODULES: str = "sklearn"
+    MODEL_ZOO_MAX_MODELS_PER_PROJECT: int = 50
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [
             origin.strip()
             for origin in self.CORS_ORIGINS.split(",")
             if origin.strip()
+        ]
+
+    @property
+    def model_zoo_allowed_modules_list(self) -> list[str]:
+        return [
+            module.strip()
+            for module in self.MODEL_ZOO_ALLOWED_MODULES.split(",")
+            if module.strip()
         ]
 
     class Config:

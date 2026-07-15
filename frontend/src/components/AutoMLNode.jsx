@@ -2,6 +2,7 @@ import React from "react";
 import { Handle, Position } from "reactflow";
 import {
   Bot,
+  Boxes,
   CheckCircle2,
   CircleDashed,
   Loader2,
@@ -12,6 +13,16 @@ import {
 export default function AutoMLNode({ data }) {
   const status = data.status || "idle";
   const theme = getStatusTheme(status);
+  const modelZooModels = data.modelZooModels || [];
+  const selectedModelIds = data.custom_model_ids || [];
+
+  const toggleCustomModel = (modelZooId) => {
+    const nextIds = selectedModelIds.includes(modelZooId)
+      ? selectedModelIds.filter((currentId) => currentId !== modelZooId)
+      : [...selectedModelIds, modelZooId];
+
+    data.onChange?.("custom_model_ids", nextIds);
+  };
 
   return (
     <div
@@ -34,7 +45,9 @@ export default function AutoMLNode({ data }) {
 
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-black text-slate-900">AutoML Engine</h3>
-          <p className="text-xs text-slate-500">FLAML / Optuna optimizer</p>
+          <p className="text-xs text-slate-500">
+            Built-ins + project Model Zoo
+          </p>
         </div>
 
         <StatusIcon status={status} />
@@ -51,7 +64,9 @@ export default function AutoMLNode({ data }) {
 
           <select
             value={data.tuning_mode || "flaml"}
-            onChange={(e) => data.onChange?.("tuning_mode", e.target.value)}
+            onChange={(event) =>
+              data.onChange?.("tuning_mode", event.target.value)
+            }
             className="nodrag mt-1 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-violet-400 focus:bg-white focus:ring-4 focus:ring-violet-100"
           >
             <option value="flaml">FLAML Fast AutoML</option>
@@ -71,8 +86,8 @@ export default function AutoMLNode({ data }) {
               min="10"
               max="300"
               value={data.time_budget || 30}
-              onChange={(e) =>
-                data.onChange?.("time_budget", Number(e.target.value))
+              onChange={(event) =>
+                data.onChange?.("time_budget", Number(event.target.value))
               }
               className="nodrag w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-violet-400 focus:bg-white focus:ring-4 focus:ring-violet-100"
             />
@@ -83,13 +98,67 @@ export default function AutoMLNode({ data }) {
           </div>
         </div>
 
+        <div>
+          <label className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            <Boxes size={13} />
+            Model Zoo Candidates
+          </label>
+
+          <div className="nodrag soft-scroll mt-2 max-h-36 space-y-2 overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-2">
+            {modelZooModels.length === 0 ? (
+              <div className="px-2 py-3 text-center text-[11px] text-slate-400">
+                Create and validate a Model Zoo definition first.
+              </div>
+            ) : (
+              modelZooModels.map((model) => {
+                const isValid = model.status === "valid";
+                const checked = selectedModelIds.includes(model.model_zoo_id);
+
+                return (
+                  <label
+                    key={model.model_zoo_id}
+                    className={`flex items-start gap-2 rounded-xl border px-2 py-2 text-left ${
+                      isValid
+                        ? "cursor-pointer border-slate-200 bg-white"
+                        : "cursor-not-allowed border-slate-100 bg-slate-100 opacity-60"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={!isValid}
+                      onChange={() => toggleCustomModel(model.model_zoo_id)}
+                      className="mt-0.5"
+                    />
+
+                    <span className="min-w-0">
+                      <span className="block truncate text-xs font-bold text-slate-700">
+                        {model.name}
+                      </span>
+                      <span className="block truncate text-[10px] text-slate-400">
+                        {model.task_type} · {model.status}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })
+            )}
+          </div>
+
+          <p className="mt-1 text-[10px] text-slate-400">
+            FLAML compares its winner with default custom models. Optuna also
+            tunes custom models that define a search space.
+          </p>
+        </div>
+
         <div className="rounded-2xl bg-slate-50 p-3">
           <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
             What happens here?
           </div>
           <p className="mt-1 text-xs leading-relaxed text-slate-600">
-            FLAML gives fast AutoML search. Optuna performs advanced
-            hyperparameter tuning across selected sklearn models.
+            The built-in optimizer and selected project models are evaluated on
+            the same holdout split. The highest main-metric score becomes the
+            registered model.
           </p>
         </div>
       </div>

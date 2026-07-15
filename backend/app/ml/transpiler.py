@@ -51,6 +51,7 @@ def execute_pipeline_graph(
     *,
     owner_id: str | None = None,
     project_id: str | None = None,
+    custom_model_definitions: list[dict] | None = None,
 ) -> dict:
     if not nodes:
         raise ValueError("Pipeline must contain at least one node.")
@@ -61,6 +62,7 @@ def execute_pipeline_graph(
 
     pipeline_state: Dict[str, Any] = {}
     execution_log = []
+    resolved_custom_models = custom_model_definitions or []
 
     while current_node_id:
         if current_node_id in visited_nodes:
@@ -104,15 +106,37 @@ def execute_pipeline_graph(
 
             time_budget = max(10, min(int(node_data.get("time_budget", 30)), 300))
             tuning_mode = node_data.get("tuning_mode", "flaml")
+            selected_custom_ids = list(
+                dict.fromkeys(node_data.get("custom_model_ids") or [])
+            )
 
             if tuning_mode not in ["flaml", "optuna"]:
                 raise ValueError("Invalid tuning_mode. Use 'flaml' or 'optuna'.")
+
+            resolved_ids = {
+                definition.get("model_zoo_id")
+                for definition in resolved_custom_models
+            }
+
+            missing_ids = [
+                model_id
+                for model_id in selected_custom_ids
+                if model_id not in resolved_ids
+            ]
+
+            if missing_ids:
+                raise ValueError(
+                    "One or more selected Model Zoo definitions were not resolved."
+                )
 
             execution_log.append(
                 f"-> Triggering AutoML training for target: {target_column}"
             )
             execution_log.append(f"-> Training mode: {tuning_mode}")
             execution_log.append(f"-> Time budget: {time_budget} seconds")
+            execution_log.append(
+                f"-> Selected Model Zoo candidates: {len(resolved_custom_models)}"
+            )
 
             task = train_automl.delay(
                 dataset_path,
@@ -121,6 +145,7 @@ def execute_pipeline_graph(
                 tuning_mode,
                 owner_id,
                 project_id,
+                resolved_custom_models,
             )
 
             pipeline_state["task_id"] = task.id
@@ -128,6 +153,7 @@ def execute_pipeline_graph(
             pipeline_state["time_budget"] = time_budget
             pipeline_state["tuning_mode"] = tuning_mode
             pipeline_state["project_id"] = project_id
+            pipeline_state["custom_model_ids"] = selected_custom_ids
 
             execution_log.append(f"-> Background Celery task queued: {task.id}")
 

@@ -39,3 +39,33 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+export const modelZooApi = {
+  list() {
+    return api.get("/model-zoo");
+  },
+
+  get(modelZooId) {
+    return api.get(`/model-zoo/${modelZooId}`);
+  },
+
+  create(payload) {
+    return api.post("/model-zoo", payload);
+  },
+
+  update(modelZooId, payload) {
+    return api.patch(`/model-zoo/${modelZooId}`, payload);
+  },
+
+  validate(modelZooId) {
+    return api.post(`/model-zoo/${modelZooId}/validate`);
+  },
+
+  remove(modelZooId) {
+    return api.delete(`/model-zoo/${modelZooId}`);
+  },
+
+  capabilities() {
+    return api.get("/model-zoo/capabilities");
+  },
+};

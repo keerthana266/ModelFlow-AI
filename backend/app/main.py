@@ -33,6 +33,7 @@ from app.ml.trainer import train_automl
 from app.ml.transpiler import execute_pipeline_graph
 from app.routes.auth import router as auth_router
 from app.routes.projects import router as projects_router
+from app.routes.model_zoo import router as model_zoo_router
 from app.schemas.requests import (
     DeploymentCreateRequest,
     DeploymentStatusUpdateRequest,
@@ -42,6 +43,7 @@ from app.schemas.requests import (
     TrainRequest,
 )
 from app.services.artifact_store import get_artifact_store_status
+from app.services.model_zoo_service import get_training_definitions
 from app.services.prediction_validation import (
     PredictionSchemaValidationError,
     build_input_schema,
@@ -73,6 +75,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(projects_router)
+app.include_router(model_zoo_router)
 
 
 def sanitize_leaderboard(leaderboard):
@@ -417,6 +420,13 @@ def start_experiment(
     )
 
     try:
+        custom_model_definitions = get_training_definitions(
+            db,
+            model_zoo_ids=request.custom_model_ids,
+            owner_id=current_user.user_id,
+            project_id=current_project.project_id,
+        )
+
         task = train_automl.delay(
             str(dataset.file_path),
             request.target_column,
@@ -424,6 +434,7 @@ def start_experiment(
             request.tuning_mode,
             current_user.user_id,
             current_project.project_id,
+            custom_model_definitions,
         )
 
         db.add(
@@ -694,12 +705,32 @@ def execute_visual_pipeline(
         if dataset_id:
             get_scoped_dataset(db, dataset_id, current_user, current_project)
 
+    automl_nodes = [
+        node for node in nodes_dict if str(node.get("type", "")).lower() == "automl"
+    ]
+    custom_model_ids = []
+
+    for node in automl_nodes:
+        custom_model_ids.extend(
+            list((node.get("data") or {}).get("custom_model_ids") or [])
+        )
+
+    custom_model_ids = list(dict.fromkeys(custom_model_ids))
+
     try:
+        custom_model_definitions = get_training_definitions(
+            db,
+            model_zoo_ids=custom_model_ids,
+            owner_id=current_user.user_id,
+            project_id=current_project.project_id,
+        )
+
         result = execute_pipeline_graph(
             nodes_dict,
             edges_dict,
             owner_id=current_user.user_id,
             project_id=current_project.project_id,
+            custom_model_definitions=custom_model_definitions,
         )
 
         task_id = result.get("final_state", {}).get("task_id")

@@ -31,6 +31,7 @@ import GenericPipelineNode from "./components/GenericPipelineNode";
 import NodePalette, { NODE_TEMPLATES } from "./components/NodePalette";
 
 import DatasetManager from "./components/DatasetManager";
+import ModelZooPanel from "./components/ModelZooPanel";
 import PredictPanel from "./components/PredictPanel";
 import DriftPanel from "./components/DriftPanel";
 import DeploymentPanel from "./components/DeploymentPanel";
@@ -206,6 +207,7 @@ export default function App() {
   const [predictions, setPredictions] = useState([]);
   const [pipelines, setPipelines] = useState([]);
   const [deployments, setDeployments] = useState([]);
+  const [modelZooModels, setModelZooModels] = useState([]);
 
   const [selectedDatasetId, setSelectedDatasetId] = useState("");
   const [selectedModelId, setSelectedModelId] = useState("");
@@ -292,6 +294,8 @@ export default function App() {
           data: {
             time_budget: 30,
             tuning_mode: "flaml",
+            custom_model_ids: [],
+            modelZooModels,
             status: "idle",
             statusMessage: "Waiting for training",
             onChange: (key, value) => updateNodeData(id, key, value),
@@ -350,7 +354,7 @@ export default function App() {
         },
       };
     },
-    [columns, datasets, updateNodeData]
+    [columns, datasets, modelZooModels, updateNodeData]
   );
 
   const [nodes, setNodes] = useState([
@@ -389,6 +393,8 @@ export default function App() {
       data: {
         time_budget: 30,
         tuning_mode: "flaml",
+        custom_model_ids: [],
+        modelZooModels: [],
         status: "idle",
         statusMessage: "Waiting for training",
         onChange: (key, value) => updateNodeData("node_2", key, value),
@@ -879,6 +885,11 @@ export default function App() {
     setDatasets(response.data.datasets || []);
   };
 
+  const refreshModelZoo = async () => {
+    const response = await api.get("/model-zoo");
+    setModelZooModels(response.data.models || []);
+  };
+
   const refreshColumns = async (datasetId) => {
     if (!datasetId) {
       setColumns([]);
@@ -896,12 +907,14 @@ export default function App() {
       predictionResponse,
       pipelineResponse,
       deploymentResponse,
+      modelZooResponse,
     ] = await Promise.allSettled([
       api.get("/experiments"),
       api.get("/models"),
       api.get("/predictions"),
       api.get("/pipelines"),
       api.get("/deployments"),
+      api.get("/model-zoo"),
     ]);
 
     if (experimentResponse.status === "fulfilled") {
@@ -922,6 +935,10 @@ export default function App() {
 
     if (deploymentResponse.status === "fulfilled") {
       setDeployments(deploymentResponse.value.data.deployments || []);
+    }
+
+    if (modelZooResponse.status === "fulfilled") {
+      setModelZooModels(modelZooResponse.value.data.models || []);
     }
   };
 
@@ -1054,12 +1071,14 @@ export default function App() {
           ...node,
           data: {
             ...node.data,
+            custom_model_ids: node.data?.custom_model_ids || [],
+            modelZooModels,
             onChange: (key, value) => updateNodeData(node.id, key, value),
           },
         };
       })
     );
-  }, [updateNodeData]);
+  }, [modelZooModels, updateNodeData]);
 
   useEffect(() => {
     setNodes((currentNodes) =>
@@ -1124,6 +1143,7 @@ export default function App() {
           data: {
             time_budget: Number(node.data.time_budget || 30),
             tuning_mode: node.data.tuning_mode || "flaml",
+            custom_model_ids: node.data.custom_model_ids || [],
           },
         };
       }
@@ -1208,6 +1228,8 @@ export default function App() {
           data: {
             time_budget: node.data?.time_budget || 30,
             tuning_mode: node.data?.tuning_mode || "flaml",
+            custom_model_ids: node.data?.custom_model_ids || [],
+            modelZooModels,
             status: "idle",
             statusMessage: "Loaded from saved pipeline",
             onChange: (key, value) => updateNodeData(node.id, key, value),
@@ -1560,6 +1582,12 @@ export default function App() {
             onSelectDataset={setSelectedDatasetId}
             onRefresh={refreshDatasets}
             onOpenProfile={openDatasetProfile}
+          />
+
+          <ModelZooPanel
+            models={modelZooModels}
+            onRefresh={refreshModelZoo}
+            onChanged={refreshModelZoo}
           />
 
           <PredictPanel

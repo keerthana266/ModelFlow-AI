@@ -97,6 +97,34 @@ class ExperimentResult(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class CustomModelDefinition(Base):
+    __tablename__ = "custom_model_definitions"
+
+    model_zoo_id = Column(String, primary_key=True, index=True)
+    owner_id = Column(String, index=True, nullable=False)
+    project_id = Column(String, index=True, nullable=False)
+
+    name = Column(String(160), nullable=False)
+    description = Column(Text, nullable=True)
+    framework = Column(String(60), nullable=False, default="scikit-learn")
+    task_type = Column(String(40), nullable=False)
+    class_path = Column(String(500), nullable=False)
+
+    default_parameters = Column(JSON, nullable=False, default=dict)
+    hyperparameter_space = Column(JSON, nullable=False, default=dict)
+
+    status = Column(String(30), nullable=False, default="draft")
+    validation_error = Column(Text, nullable=True)
+    validation_details = Column(JSON, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class TrainedModel(Base):
     __tablename__ = "trained_models"
 
