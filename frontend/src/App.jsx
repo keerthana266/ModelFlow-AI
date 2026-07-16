@@ -31,6 +31,7 @@ import GenericPipelineNode from "./components/GenericPipelineNode";
 import NodePalette, { NODE_TEMPLATES } from "./components/NodePalette";
 
 import DatasetManager from "./components/DatasetManager";
+import DatasetReadinessPanel from "./components/DatasetReadinessPanel";
 import ModelZooPanel from "./components/ModelZooPanel";
 import PredictPanel from "./components/PredictPanel";
 import DriftPanel from "./components/DriftPanel";
@@ -303,6 +304,8 @@ export default function App() {
           data: {
             dataset_id: "",
             target_column: "",
+            excluded_columns: [],
+            remove_duplicates: false,
             datasets,
             columns,
             status: "idle",
@@ -391,6 +394,8 @@ export default function App() {
       data: {
         dataset_id: "",
         target_column: "",
+        excluded_columns: [],
+        remove_duplicates: false,
         datasets: [],
         columns: [],
         status: "idle",
@@ -1079,6 +1084,30 @@ export default function App() {
               if (key === "dataset_id") {
                 setSelectedDatasetId(value);
                 updateNodeData(node.id, "target_column", "");
+                updateNodeData(node.id, "excluded_columns", []);
+                updateNodeData(node.id, "remove_duplicates", false);
+                updateNodeData(node.id, key, value);
+                return;
+              }
+
+              if (key === "target_column") {
+                setNodes((currentNodes) =>
+                  currentNodes.map((currentNode) =>
+                    currentNode.id === node.id
+                      ? {
+                          ...currentNode,
+                          data: {
+                            ...currentNode.data,
+                            target_column: value,
+                            excluded_columns: (
+                              currentNode.data.excluded_columns || []
+                            ).filter((column) => column !== value),
+                          },
+                        }
+                      : currentNode
+                  )
+                );
+                return;
               }
 
               updateNodeData(node.id, key, value);
@@ -1158,6 +1187,10 @@ export default function App() {
           data: {
             dataset_id: node.data.dataset_id,
             target_column: node.data.target_column,
+            excluded_columns: (node.data.excluded_columns || []).filter(
+              (column) => column !== node.data.target_column
+            ),
+            remove_duplicates: node.data.remove_duplicates === true,
           },
         };
       }
@@ -1232,6 +1265,8 @@ export default function App() {
           data: {
             dataset_id: node.data?.dataset_id || "",
             target_column: node.data?.target_column || "",
+            excluded_columns: node.data?.excluded_columns || [],
+            remove_duplicates: node.data?.remove_duplicates === true,
             datasets,
             columns,
             status: "idle",
@@ -1240,6 +1275,30 @@ export default function App() {
               if (key === "dataset_id") {
                 setSelectedDatasetId(value);
                 updateNodeData(node.id, "target_column", "");
+                updateNodeData(node.id, "excluded_columns", []);
+                updateNodeData(node.id, "remove_duplicates", false);
+                updateNodeData(node.id, key, value);
+                return;
+              }
+
+              if (key === "target_column") {
+                setNodes((currentNodes) =>
+                  currentNodes.map((currentNode) =>
+                    currentNode.id === node.id
+                      ? {
+                          ...currentNode,
+                          data: {
+                            ...currentNode.data,
+                            target_column: value,
+                            excluded_columns: (
+                              currentNode.data.excluded_columns || []
+                            ).filter((column) => column !== value),
+                          },
+                        }
+                      : currentNode
+                  )
+                );
+                return;
               }
 
               updateNodeData(node.id, key, value);
@@ -1540,6 +1599,11 @@ export default function App() {
     }
   };
 
+  const activeDataLoaderNode = nodes.find(
+    (node) => node.type === "dataLoader"
+  );
+  const activeDataLoaderData = activeDataLoaderNode?.data || {};
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#f6f8fb]">
       <nav className="z-30 flex h-16 flex-shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6 shadow-sm">
@@ -1609,6 +1673,25 @@ export default function App() {
             onSelectDataset={setSelectedDatasetId}
             onRefresh={refreshDatasets}
             onOpenProfile={openDatasetProfile}
+          />
+
+          <DatasetReadinessPanel
+            datasetId={
+              activeDataLoaderData.dataset_id || selectedDatasetId
+            }
+            targetColumn={activeDataLoaderData.target_column || ""}
+            excludedColumns={activeDataLoaderData.excluded_columns || []}
+            removeDuplicates={activeDataLoaderData.remove_duplicates === true}
+            onExcludedColumnsChange={(value) =>
+              updateNodeDataByType("dataLoader", {
+                excluded_columns: value,
+              })
+            }
+            onRemoveDuplicatesChange={(value) =>
+              updateNodeDataByType("dataLoader", {
+                remove_duplicates: value,
+              })
+            }
           />
 
           <ModelZooPanel

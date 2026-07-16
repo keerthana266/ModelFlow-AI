@@ -9,6 +9,8 @@ class TrainRequest(BaseModel):
     time_budget: int = Field(default=30, ge=10, le=300)
     tuning_mode: Literal["flaml", "optuna"] = "flaml"
     custom_model_ids: List[str] = Field(default_factory=list, max_length=20)
+    excluded_columns: List[str] = Field(default_factory=list, max_length=100)
+    remove_duplicates: bool = False
 
 
 class PredictRequest(BaseModel):

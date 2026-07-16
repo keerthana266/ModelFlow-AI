@@ -90,12 +90,34 @@ def execute_pipeline_graph(
                 raise ValueError("Data Loader node is missing target_column.")
 
             dataset_path = get_dataset_path(dataset_id)
+            requested_excluded_columns = list(
+                dict.fromkeys(node_data.get("excluded_columns") or [])
+            )
+            excluded_columns = [
+                column
+                for column in requested_excluded_columns
+                if column and column != target_column
+            ]
+            remove_duplicates = bool(node_data.get("remove_duplicates", False))
+
             pipeline_state["dataset_id"] = dataset_id
             pipeline_state["dataset_path"] = str(dataset_path)
             pipeline_state["target_column"] = target_column
+            pipeline_state["excluded_columns"] = excluded_columns
+            pipeline_state["remove_duplicates"] = remove_duplicates
 
             execution_log.append(f"-> Dataset found: {dataset_id}")
             execution_log.append(f"-> Target column: {target_column}")
+            if target_column in requested_excluded_columns:
+                execution_log.append(
+                    "-> Ignored stale target-column exclusion for safety."
+                )
+            execution_log.append(
+                f"-> Excluded columns: {len(excluded_columns)}"
+            )
+            execution_log.append(
+                f"-> Remove duplicate rows: {remove_duplicates}"
+            )
 
         elif node_type == "automl":
             dataset_path = pipeline_state.get("dataset_path")
@@ -146,6 +168,8 @@ def execute_pipeline_graph(
                 owner_id,
                 project_id,
                 resolved_custom_models,
+                pipeline_state.get("excluded_columns") or [],
+                bool(pipeline_state.get("remove_duplicates", False)),
             )
 
             pipeline_state["task_id"] = task.id

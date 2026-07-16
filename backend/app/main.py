@@ -37,6 +37,7 @@ from app.ml.transpiler import execute_pipeline_graph
 from app.routes.auth import router as auth_router
 from app.routes.projects import router as projects_router
 from app.routes.model_zoo import router as model_zoo_router
+from app.routes.dataset_readiness import router as dataset_readiness_router
 from app.schemas.requests import (
     DeploymentCreateRequest,
     DeploymentStatusUpdateRequest,
@@ -89,6 +90,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(projects_router)
 app.include_router(model_zoo_router)
+app.include_router(dataset_readiness_router)
 
 
 def sanitize_leaderboard(leaderboard):
@@ -449,6 +451,8 @@ def start_experiment(
             current_user.user_id,
             current_project.project_id,
             custom_model_definitions,
+            request.excluded_columns,
+            request.remove_duplicates,
         )
 
         db.add(

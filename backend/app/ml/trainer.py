@@ -817,9 +817,16 @@ def train_automl(
     owner_id: str | None = None,
     project_id: str | None = None,
     custom_model_definitions: list[dict] | None = None,
+    excluded_columns: list[str] | None = None,
+    remove_duplicates: bool = False,
 ) -> dict:
     time_budget = max(10, min(int(time_budget), 300))
     custom_model_definitions = list(custom_model_definitions or [])
+    excluded_columns = [
+        column
+        for column in dict.fromkeys(excluded_columns or [])
+        if column and column != target_column
+    ]
 
     if tuning_mode not in ["flaml", "optuna"]:
         tuning_mode = "flaml"
@@ -834,18 +841,38 @@ def train_automl(
 
     validate_training_data(df, target_column)
 
-    df = df.dropna(subset=[target_column])
+    unknown_excluded_columns = [
+        column for column in excluded_columns if column not in df.columns
+    ]
+    if unknown_excluded_columns:
+        raise ValueError(
+            "Excluded columns were not found in the dataset: "
+            + ", ".join(unknown_excluded_columns)
+        )
+
+    rows_before_preparation = int(df.shape[0])
+    duplicates_removed = 0
+
+    if remove_duplicates:
+        before_deduplication = int(df.shape[0])
+        df = df.drop_duplicates().reset_index(drop=True)
+        duplicates_removed = before_deduplication - int(df.shape[0])
+
+    missing_target_rows_removed = int(df[target_column].isna().sum())
+    df = df.dropna(subset=[target_column]).reset_index(drop=True)
 
     if df.shape[0] < 10:
         raise ValueError(
-            "Dataset must contain at least 10 rows after removing empty target values."
+            "Dataset must contain at least 10 rows after data preparation."
         )
 
-    X = df.drop(columns=[target_column])
+    X = df.drop(columns=[target_column, *excluded_columns])
     y = df[target_column]
 
     if X.empty:
-        raise ValueError("There are no feature columns available for training.")
+        raise ValueError(
+            "There are no feature columns available after applying the selected exclusions."
+        )
 
     problem_type = detect_problem_type(y)
     column_groups = get_column_groups(X)
@@ -1178,6 +1205,13 @@ def train_automl(
         "reference_data_path": str(reference_data_path),
         "owner_id": owner_id,
         "project_id": project_id,
+        "excluded_columns": excluded_columns,
+        "remove_duplicates": bool(remove_duplicates),
+        "data_preparation": {
+            "rows_before_preparation": rows_before_preparation,
+            "duplicates_removed": duplicates_removed,
+            "missing_target_rows_removed": missing_target_rows_removed,
+        },
         "created_at": utc_now_iso(),
     }
 
@@ -1208,6 +1242,13 @@ def train_automl(
         ],
         "owner_id": owner_id,
         "project_id": project_id,
+        "excluded_columns": excluded_columns,
+        "remove_duplicates": bool(remove_duplicates),
+        "data_preparation": {
+            "rows_before_preparation": rows_before_preparation,
+            "duplicates_removed": duplicates_removed,
+            "missing_target_rows_removed": missing_target_rows_removed,
+        },
         "created_at": utc_now_iso(),
     }
 
