@@ -134,6 +134,32 @@ function sanitizeDeploymentName(value) {
   return cleaned || "automl-model-api";
 }
 
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function waitForDeployment(deploymentId, attempts = 45) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const response = await api.get(`/deployments/${deploymentId}`);
+    const deployment = response.data;
+
+    if (["active", "inactive"].includes(deployment.status)) {
+      return deployment;
+    }
+
+    if (["failed", "archived"].includes(deployment.status)) {
+      throw new Error(
+        deployment.error_message ||
+          `Deployment entered status '${deployment.status}'.`
+      );
+    }
+
+    await sleep(2000);
+  }
+
+  throw new Error("Deployment did not become ready within 90 seconds.");
+}
+
 function getApiErrorMessage(error) {
   const detail = error.response?.data?.detail;
 
@@ -721,14 +747,11 @@ export default function App() {
   );
 
   const autoDeployModel = async (trainingResult) => {
-    const deployNode = nodesRef.current.find(
-      (node) => node.type === "deploy"
-    );
+    const deployNode = nodesRef.current.find((node) => node.type === "deploy");
 
     if (!deployNode) return;
 
     const deployData = deployNode.data || {};
-
     if (deployData.auto_deploy === false) {
       updateNodeDataByType("deploy", {
         status: "idle",
@@ -739,7 +762,6 @@ export default function App() {
     }
 
     const modelId = trainingResult?.best_model_id;
-
     if (!modelId) {
       updateNodeDataByType("deploy", {
         status: "error",
@@ -750,53 +772,58 @@ export default function App() {
     }
 
     const targetColumn = trainingResult?.target_column || "model";
-    const defaultName = `${targetColumn}-api`;
     const deploymentName = sanitizeDeploymentName(
-      deployData.deployment_name || defaultName
+      deployData.deployment_name || `${targetColumn}-api`
     );
-
-    const environment = deployData.environment || "production";
-    const activate = deployData.activate !== false;
 
     try {
       updateNodeDataByType("deploy", {
         status: "running",
-        statusMessage: "Creating REST API deployment",
+        statusMessage: "Queuing isolated Docker deployment",
         lastDeployment: null,
       });
-
-      addLog(`Deploy node: creating deployment '${deploymentName}'`);
+      addLog(`Deploy node: queuing '${deploymentName}'`);
 
       const response = await api.post("/deployments", {
         model_id: modelId,
         deployment_name: deploymentName,
-        environment,
-        activate,
+        environment: deployData.environment || "production",
+        activate: deployData.activate !== false,
       });
+
+      const queuedDeployment = response.data;
+      updateNodeDataByType("deploy", {
+        status: "running",
+        statusMessage: "Starting model container",
+        lastDeployment: queuedDeployment,
+      });
+      addLog(
+        `Docker deployment task queued: ${queuedDeployment.task_id || queuedDeployment.deployment_id}`
+      );
+
+      const readyDeployment = await waitForDeployment(
+        queuedDeployment.deployment_id
+      );
 
       updateNodeDataByType("deploy", {
         status: "success",
-        statusMessage: `Deployment v${response.data.version} created`,
-        lastDeployment: response.data,
+        statusMessage: `Container active on port ${readyDeployment.host_port}`,
+        lastDeployment: readyDeployment,
       });
-
       addLog(
-        `Deploy node completed: ${response.data.versioned_endpoint_path || response.data.endpoint_path}`
+        `Deploy node completed: ${readyDeployment.runtime_endpoint_url}`
       );
-
       pushToast(
         "success",
-        "Deployment created",
-        `${deploymentName} v${response.data.version}`
+        "Docker deployment active",
+        `${deploymentName} v${readyDeployment.version} · port ${readyDeployment.host_port}`
       );
     } catch (error) {
       const message = getApiErrorMessage(error);
-
       updateNodeDataByType("deploy", {
         status: "error",
         statusMessage: message,
       });
-
       addLog(`Deploy node failed: ${message}`);
       pushToast("error", "Deployment failed", message);
     }

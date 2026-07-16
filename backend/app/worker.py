@@ -9,7 +9,10 @@ celery_app = Celery(
     "automl_worker",
     broker=settings.REDIS_BROKER_URL,
     backend=settings.REDIS_BACKEND_URL,
-    include=["app.ml.trainer"],
+    include=[
+        "app.ml.trainer",
+        "app.tasks.deployment_tasks",
+    ],
 )
 
 celery_app.conf.update(

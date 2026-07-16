@@ -1,8 +1,10 @@
 import asyncio
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 import joblib
+import httpx
 import numpy as np
 from celery.result import AsyncResult
 from fastapi import (
@@ -24,6 +26,7 @@ from app.core.config import settings
 from app.core.security import decode_access_token
 from app.db import models
 from app.db.database import Base, SessionLocal, engine, get_db
+from app.db.deployment_migrations import ensure_docker_deployment_columns
 from app.db.migrations import ensure_project_scope_columns
 from app.dependencies.auth import get_current_user
 from app.dependencies.project import get_current_project
@@ -43,6 +46,15 @@ from app.schemas.requests import (
     TrainRequest,
 )
 from app.services.artifact_store import get_artifact_store_status
+from app.services.docker_deployment_service import (
+    DockerDeploymentError,
+    container_logs,
+    inspect_container,
+    remove_container,
+    restart_container,
+    start_existing_container,
+    stop_container,
+)
 from app.services.model_zoo_service import get_training_definitions
 from app.services.prediction_validation import (
     PredictionSchemaValidationError,
@@ -56,6 +68,7 @@ from app.services.storage import (
     get_dataset_path,
     save_uploaded_dataset,
 )
+from app.tasks.deployment_tasks import deploy_model_container_task
 from app.worker import celery_app
 
 
@@ -217,6 +230,7 @@ def startup_event():
     create_storage_folders()
     Base.metadata.create_all(bind=engine)
     ensure_project_scope_columns()
+    ensure_docker_deployment_columns()
 
     try:
         with engine.connect() as connection:
@@ -1048,19 +1062,11 @@ def create_model_deployment(
     latest_deployment = (
         scoped_query(db, models.ModelDeployment, current_user, current_project)
         .filter(models.ModelDeployment.deployment_name == request.deployment_name)
+        .filter(models.ModelDeployment.environment == request.environment)
         .order_by(models.ModelDeployment.version.desc())
         .first()
     )
     next_version = latest_deployment.version + 1 if latest_deployment else 1
-
-    if request.activate:
-        (
-            scoped_query(db, models.ModelDeployment, current_user, current_project)
-            .filter(models.ModelDeployment.deployment_name == request.deployment_name)
-            .filter(models.ModelDeployment.environment == request.environment)
-            .filter(models.ModelDeployment.status == "active")
-            .update({"status": "inactive"})
-        )
 
     deployment_id = generate_id("deployment")
     deployment = models.ModelDeployment(
@@ -1072,15 +1078,34 @@ def create_model_deployment(
         experiment_id=model_record.experiment_id,
         version=next_version,
         environment=request.environment,
-        status="active" if request.activate else "inactive",
+        status="pending",
+        activate_on_ready=request.activate,
         endpoint_path=f"/deployments/{deployment_id}/predict",
+        host=settings.DOCKER_DEPLOYMENT_HOST,
+        container_port=settings.DOCKER_CONTAINER_PORT,
     )
 
-    db.add(deployment)
-    db.commit()
-    db.refresh(deployment)
+    try:
+        db.add(deployment)
+        db.commit()
+        db.refresh(deployment)
 
-    return deployment_response(deployment)
+        task = deploy_model_container_task.delay(deployment_id)
+        deployment.task_id = task.id
+        db.merge(
+            models.TaskRun(
+                task_id=task.id,
+                owner_id=current_user.user_id,
+                project_id=current_project.project_id,
+                task_type="docker_deployment",
+            )
+        )
+        db.commit()
+        db.refresh(deployment)
+        return deployment_response(deployment)
+    except Exception as error:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(error))
 
 
 def deployment_response(deployment: models.ModelDeployment) -> dict:
@@ -1092,27 +1117,27 @@ def deployment_response(deployment: models.ModelDeployment) -> dict:
         "version": deployment.version,
         "environment": deployment.environment,
         "status": deployment.status,
+        "activate_on_ready": deployment.activate_on_ready,
+        "task_id": deployment.task_id,
         "endpoint_path": deployment.endpoint_path,
         "versioned_endpoint_path": (
             f"/deployments/name/{deployment.deployment_name}"
             f"/versions/{deployment.version}/predict"
         ),
+        "runtime_image": deployment.runtime_image,
+        "container_id": deployment.container_id,
+        "container_name": deployment.container_name,
+        "host": deployment.host,
+        "host_port": deployment.host_port,
+        "container_port": deployment.container_port,
+        "runtime_endpoint_url": deployment.runtime_endpoint_url,
+        "health_url": deployment.health_url,
+        "error_message": deployment.error_message,
         "created_at": deployment.created_at,
+        "updated_at": deployment.updated_at,
+        "started_at": deployment.started_at,
+        "stopped_at": deployment.stopped_at,
     }
-
-
-@app.get("/deployments")
-def list_model_deployments(
-    current_user: models.User = Depends(get_current_user),
-    current_project: models.Project = Depends(get_current_project),
-    db: Session = Depends(get_db),
-):
-    deployments = (
-        scoped_query(db, models.ModelDeployment, current_user, current_project)
-        .order_by(models.ModelDeployment.created_at.desc())
-        .all()
-    )
-    return {"deployments": [deployment_response(item) for item in deployments]}
 
 
 def get_scoped_deployment(
@@ -1133,6 +1158,298 @@ def get_scoped_deployment(
     return deployment
 
 
+@app.get("/deployments")
+def list_model_deployments(
+    current_user: models.User = Depends(get_current_user),
+    current_project: models.Project = Depends(get_current_project),
+    db: Session = Depends(get_db),
+):
+    deployments = (
+        scoped_query(db, models.ModelDeployment, current_user, current_project)
+        .order_by(models.ModelDeployment.created_at.desc())
+        .all()
+    )
+    return {"deployments": [deployment_response(item) for item in deployments]}
+
+
+@app.get("/deployments/{deployment_id}")
+def get_model_deployment(
+    deployment_id: str,
+    current_user: models.User = Depends(get_current_user),
+    current_project: models.Project = Depends(get_current_project),
+    db: Session = Depends(get_db),
+):
+    deployment = get_scoped_deployment(
+        db, deployment_id, current_user, current_project
+    )
+    return deployment_response(deployment)
+
+
+@app.get("/deployments/{deployment_id}/health")
+def get_model_deployment_health(
+    deployment_id: str,
+    current_user: models.User = Depends(get_current_user),
+    current_project: models.Project = Depends(get_current_project),
+    db: Session = Depends(get_db),
+):
+    deployment = get_scoped_deployment(
+        db, deployment_id, current_user, current_project
+    )
+    container = inspect_container(deployment.container_id)
+    runtime_health = None
+
+    if deployment.health_url and container.get("status") == "running":
+        try:
+            runtime_health = httpx.get(
+                deployment.health_url,
+                timeout=3.0,
+            ).json()
+        except Exception as error:
+            runtime_health = {"status": "unreachable", "error": str(error)}
+
+    return {
+        "deployment_id": deployment.deployment_id,
+        "deployment_status": deployment.status,
+        "container": container,
+        "runtime_health": runtime_health,
+    }
+
+
+@app.get("/deployments/{deployment_id}/logs")
+def get_model_deployment_logs(
+    deployment_id: str,
+    tail: int = Query(default=250, ge=1, le=5000),
+    current_user: models.User = Depends(get_current_user),
+    current_project: models.Project = Depends(get_current_project),
+    db: Session = Depends(get_db),
+):
+    deployment = get_scoped_deployment(
+        db, deployment_id, current_user, current_project
+    )
+    return {
+        "deployment_id": deployment.deployment_id,
+        "logs": container_logs(deployment.container_id, tail=tail),
+    }
+
+
+@app.post("/deployments/{deployment_id}/start")
+def start_model_deployment(
+    deployment_id: str,
+    current_user: models.User = Depends(get_current_user),
+    current_project: models.Project = Depends(get_current_project),
+    db: Session = Depends(get_db),
+):
+    deployment = get_scoped_deployment(
+        db, deployment_id, current_user, current_project
+    )
+
+    if deployment.status == "archived":
+        raise HTTPException(status_code=400, detail="Archived deployment cannot start.")
+
+    deployment.status = "starting"
+    deployment.activate_on_ready = True
+    deployment.error_message = None
+    db.commit()
+
+    task = deploy_model_container_task.delay(deployment.deployment_id)
+    deployment.task_id = task.id
+    db.merge(
+        models.TaskRun(
+            task_id=task.id,
+            owner_id=current_user.user_id,
+            project_id=current_project.project_id,
+            task_type="docker_deployment_start",
+        )
+    )
+    db.commit()
+    db.refresh(deployment)
+    return deployment_response(deployment)
+
+
+@app.post("/deployments/{deployment_id}/stop")
+def stop_model_deployment(
+    deployment_id: str,
+    current_user: models.User = Depends(get_current_user),
+    current_project: models.Project = Depends(get_current_project),
+    db: Session = Depends(get_db),
+):
+    deployment = get_scoped_deployment(
+        db, deployment_id, current_user, current_project
+    )
+
+    try:
+        if deployment.container_id:
+            stop_container(deployment.container_id)
+        deployment.status = "stopped"
+        deployment.stopped_at = datetime.utcnow()
+        db.commit()
+        db.refresh(deployment)
+        return deployment_response(deployment)
+    except DockerDeploymentError as error:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.post("/deployments/{deployment_id}/restart")
+def restart_model_deployment(
+    deployment_id: str,
+    current_user: models.User = Depends(get_current_user),
+    current_project: models.Project = Depends(get_current_project),
+    db: Session = Depends(get_db),
+):
+    deployment = get_scoped_deployment(
+        db, deployment_id, current_user, current_project
+    )
+
+    if not deployment.container_id or not deployment.health_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Deployment container has not been created yet.",
+        )
+
+    try:
+        result = restart_container(
+            deployment.container_id,
+            deployment.health_url,
+        )
+        deployment.status = "active"
+        deployment.runtime_logs = result.get("runtime_logs")
+        deployment.started_at = datetime.utcnow()
+        deployment.stopped_at = None
+        db.commit()
+        db.refresh(deployment)
+        return deployment_response(deployment)
+    except DockerDeploymentError as error:
+        deployment.status = "failed"
+        deployment.error_message = str(error)
+        db.commit()
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.delete("/deployments/{deployment_id}")
+def archive_model_deployment(
+    deployment_id: str,
+    current_user: models.User = Depends(get_current_user),
+    current_project: models.Project = Depends(get_current_project),
+    db: Session = Depends(get_db),
+):
+    deployment = get_scoped_deployment(
+        db, deployment_id, current_user, current_project
+    )
+
+    try:
+        if deployment.container_id:
+            remove_container(deployment.container_id)
+        deployment.status = "archived"
+        deployment.container_id = None
+        deployment.container_name = None
+        deployment.host_port = None
+        deployment.runtime_endpoint_url = None
+        deployment.health_url = None
+        deployment.stopped_at = datetime.utcnow()
+        db.commit()
+        db.refresh(deployment)
+        return deployment_response(deployment)
+    except DockerDeploymentError as error:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+def run_prediction_from_deployment(
+    *,
+    deployment: models.ModelDeployment,
+    model_record: models.TrainedModel,
+    input_data,
+    db: Session,
+    owner_id: str,
+    project_id: str,
+):
+    if deployment.status != "active":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Deployment is not active. Current status: {deployment.status}",
+        )
+
+    if not deployment.runtime_endpoint_url:
+        raise HTTPException(
+            status_code=503,
+            detail="Deployment runtime endpoint is not ready.",
+        )
+
+    try:
+        _, cleaned_input, validation_summary = (
+            validate_and_prepare_prediction_input(
+                model_record=model_record,
+                input_data=input_data,
+            )
+        )
+
+        response = httpx.post(
+            deployment.runtime_endpoint_url,
+            json={"data": cleaned_input},
+            timeout=settings.DOCKER_PREDICTION_TIMEOUT_SECONDS,
+        )
+        if response.status_code >= 400:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "message": "Model container rejected the prediction request.",
+                    "runtime_status": response.status_code,
+                    "runtime_response": response.text,
+                },
+            )
+
+        payload = response.json()
+        predictions = make_json_safe(payload.get("predictions", []))
+        final_prediction = (
+            predictions[0]
+            if isinstance(predictions, list) and len(predictions) == 1
+            else predictions
+        )
+
+        prediction_id = generate_id("prediction")
+        db.add(
+            models.PredictionLog(
+                prediction_id=prediction_id,
+                owner_id=owner_id,
+                project_id=project_id,
+                model_id=model_record.model_id,
+                input_data=make_json_safe(cleaned_input),
+                prediction=make_json_safe(final_prediction),
+            )
+        )
+        db.commit()
+
+        return {
+            "prediction_id": prediction_id,
+            "deployment_id": deployment.deployment_id,
+            "deployment_name": deployment.deployment_name,
+            "deployment_version": deployment.version,
+            "environment": deployment.environment,
+            "model_id": model_record.model_id,
+            "model_name": model_record.model_name,
+            "prediction": make_json_safe(final_prediction),
+            "schema_validation": validation_summary,
+        }
+    except PredictionSchemaValidationError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Prediction input schema validation failed.",
+                "errors": error.errors,
+                "warnings": error.warnings,
+                "input_schema": build_input_schema(model_record),
+            },
+        )
+    except HTTPException:
+        raise
+    except httpx.HTTPError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not reach model container: {error}",
+        )
+
+
 @app.post("/deployments/{deployment_id}/predict")
 def predict_with_deployment(
     deployment_id: str,
@@ -1144,32 +1461,17 @@ def predict_with_deployment(
     deployment = get_scoped_deployment(
         db, deployment_id, current_user, current_project
     )
-
-    if deployment.status != "active":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Deployment is not active. Current status: {deployment.status}",
-        )
-
     model_record = get_scoped_model(
         db, deployment.model_id, current_user, current_project
     )
-    prediction_result = run_prediction_from_model_record(
+    return run_prediction_from_deployment(
+        deployment=deployment,
         model_record=model_record,
         input_data=request.data,
         db=db,
         owner_id=current_user.user_id,
         project_id=current_project.project_id,
     )
-    prediction_result.update(
-        {
-            "deployment_id": deployment.deployment_id,
-            "deployment_name": deployment.deployment_name,
-            "deployment_version": deployment.version,
-            "environment": deployment.environment,
-        }
-    )
-    return prediction_result
 
 
 @app.patch("/deployments/{deployment_id}/status")
@@ -1180,23 +1482,17 @@ def update_model_deployment_status(
     current_project: models.Project = Depends(get_current_project),
     db: Session = Depends(get_db),
 ):
-    deployment = get_scoped_deployment(
-        db, deployment_id, current_user, current_project
-    )
-
     if request.status == "active":
-        (
-            scoped_query(db, models.ModelDeployment, current_user, current_project)
-            .filter(models.ModelDeployment.deployment_name == deployment.deployment_name)
-            .filter(models.ModelDeployment.environment == deployment.environment)
-            .filter(models.ModelDeployment.status == "active")
-            .update({"status": "inactive"})
+        return start_model_deployment(
+            deployment_id, current_user, current_project, db
         )
-
-    deployment.status = request.status
-    db.commit()
-    db.refresh(deployment)
-    return deployment_response(deployment)
+    if request.status == "inactive":
+        return stop_model_deployment(
+            deployment_id, current_user, current_project, db
+        )
+    return archive_model_deployment(
+        deployment_id, current_user, current_project, db
+    )
 
 
 @app.post("/deployments/name/{deployment_name}/versions/{version}/predict")
@@ -1218,28 +1514,14 @@ def predict_with_deployment_version(
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment version not found.")
 
-    if deployment.status != "active":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Deployment is not active. Current status: {deployment.status}",
-        )
-
     model_record = get_scoped_model(
         db, deployment.model_id, current_user, current_project
     )
-    prediction_result = run_prediction_from_model_record(
+    return run_prediction_from_deployment(
+        deployment=deployment,
         model_record=model_record,
         input_data=request.data,
         db=db,
         owner_id=current_user.user_id,
         project_id=current_project.project_id,
     )
-    prediction_result.update(
-        {
-            "deployment_id": deployment.deployment_id,
-            "deployment_name": deployment.deployment_name,
-            "deployment_version": deployment.version,
-            "environment": deployment.environment,
-        }
-    )
-    return prediction_result

@@ -29,6 +29,19 @@ class Settings(BaseSettings):
     MODEL_ZOO_ALLOWED_MODULES: str = "sklearn"
     MODEL_ZOO_MAX_MODELS_PER_PROJECT: int = 50
 
+    # Per-model Docker deployment runtime
+    DOCKER_RUNTIME_IMAGE: str = "automl-forge-runtime:1.0"
+    DOCKER_DEPLOYMENT_HOST: str = "127.0.0.1"
+    DOCKER_DEPLOYMENT_BIND_HOST: str = "127.0.0.1"
+    DOCKER_PORT_START: int = 8101
+    DOCKER_PORT_END: int = 8999
+    DOCKER_CONTAINER_PORT: int = 8000
+    DOCKER_HEALTH_TIMEOUT_SECONDS: int = 60
+    DOCKER_PREDICTION_TIMEOUT_SECONDS: int = 30
+    DOCKER_MEMORY_LIMIT: str = "1g"
+    DOCKER_NANO_CPUS: int = 1_000_000_000
+    DOCKER_PIDS_LIMIT: int = 128
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [

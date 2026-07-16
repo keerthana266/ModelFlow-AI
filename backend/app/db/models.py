@@ -208,6 +208,29 @@ class ModelDeployment(Base):
 
     version = Column(Integer, nullable=False)
     environment = Column(String, default="production")
-    status = Column(String, default="active")
+    status = Column(String, default="pending", index=True)
+    activate_on_ready = Column(Boolean, default=True, nullable=False)
+
+    # Stable authenticated proxy endpoint exposed by the main API.
     endpoint_path = Column(Text, nullable=False)
+
+    # Celery orchestration metadata.
+    task_id = Column(String, index=True, nullable=True)
+
+    # Docker runtime metadata.
+    runtime_image = Column(String, nullable=True)
+    container_id = Column(String, nullable=True)
+    container_name = Column(String, nullable=True)
+    host = Column(String, default="127.0.0.1")
+    host_port = Column(Integer, nullable=True)
+    container_port = Column(Integer, default=8000)
+    runtime_endpoint_url = Column(Text, nullable=True)
+    health_url = Column(Text, nullable=True)
+
+    error_message = Column(Text, nullable=True)
+    runtime_logs = Column(Text, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    started_at = Column(DateTime, nullable=True)
+    stopped_at = Column(DateTime, nullable=True)
