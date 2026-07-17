@@ -9,6 +9,9 @@ import {
   ExternalLink,
   FileText,
   HeartPulse,
+  Info,
+  Lightbulb,
+  Minus,
   Loader2,
   Play,
   Plus,
@@ -16,6 +19,8 @@ import {
   RotateCw,
   Send,
   Sparkles,
+  TrendingDown,
+  TrendingUp,
   Trash2,
   X,
 } from "lucide-react";
@@ -501,7 +506,7 @@ export default function DeploymentPanel({ models, deployments, onRefresh }) {
                       className="flex items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-2 py-2.5 text-[10px] font-black text-white shadow-sm disabled:opacity-35"
                     >
                       <Sparkles size={12} />
-                      Test Prediction
+                      Use Model
                     </button>
 
                     <button
@@ -660,7 +665,7 @@ function PredictionPlayground({ state, setState, onClose, onDone }) {
 
   return (
     <ModalShell
-      title="Test deployed model"
+      title="Use deployed model"
       subtitle={`${deployment.deployment_name} v${deployment.version}`}
       icon={<Sparkles size={18} />}
       onClose={onClose}
@@ -716,24 +721,187 @@ function PredictionPlayground({ state, setState, onClose, onDone }) {
             </div>
           </div>
 
-          <div className="min-h-56 rounded-2xl bg-slate-950 p-4 text-white">
-            <div className="flex items-center gap-2 text-xs font-black">
-              <Braces size={14} /> Prediction result
-            </div>
-
-            {state.prediction ? (
-              <pre className="soft-scroll mt-3 max-h-96 overflow-auto whitespace-pre-wrap text-xs text-emerald-300">
-                {JSON.stringify(state.prediction, null, 2)}
-              </pre>
-            ) : (
-              <div className="mt-8 text-center text-xs text-slate-400">
-                Submit the form to see the prediction.
+          {state.prediction ? (
+            <PredictionResult
+              payload={state.prediction}
+              targetColumn={modelDetails.target_column}
+              problemType={modelDetails.problem_type}
+            />
+          ) : (
+            <div className="min-h-56 rounded-2xl bg-slate-950 p-4 text-white">
+              <div className="flex items-center gap-2 text-xs font-black">
+                <Braces size={14} /> Prediction result
               </div>
-            )}
-          </div>
+              <div className="mt-8 text-center text-xs text-slate-400">
+                Submit the form to see the prediction and its explanation.
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </ModalShell>
+  );
+}
+
+
+function formatResultValue(value) {
+  if (typeof value === "number") {
+    return new Intl.NumberFormat(undefined, {
+      maximumFractionDigits: 4,
+    }).format(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.length === 1
+      ? formatResultValue(value[0])
+      : JSON.stringify(value);
+  }
+
+  if (value && typeof value === "object") {
+    return JSON.stringify(value);
+  }
+
+  return String(value ?? "—");
+}
+
+function PredictionResult({ payload, targetColumn, problemType }) {
+  const explanation = payload?.explanation;
+  const factors = explanation?.factors || [];
+  const prediction = payload?.prediction;
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl bg-slate-950 p-5 text-white">
+        <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+          Predicted {prettifyName(targetColumn)}
+        </div>
+        <div className="mt-2 break-words text-3xl font-black tracking-tight text-emerald-300">
+          {formatResultValue(prediction)}
+        </div>
+        {problemType === "classification" &&
+          explanation?.prediction_details?.predicted_probability != null && (
+            <div className="mt-2 text-xs text-slate-300">
+              Confidence for this result: {Math.round(
+                explanation.prediction_details.predicted_probability * 1000
+              ) / 10}
+              %
+            </div>
+          )}
+      </div>
+
+      {explanation?.available ? (
+        <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+          <div className="flex items-start gap-3">
+            <div className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-xl bg-blue-600 text-white">
+              <Lightbulb size={16} />
+            </div>
+            <div>
+              <div className="text-sm font-black text-slate-900">
+                {explanation.title || "Why this result was produced"}
+              </div>
+              <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                {explanation.summary}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-2.5">
+            {factors.map((factor) => {
+              const isIncrease = factor.direction === "increase";
+              const isDecrease = factor.direction === "decrease";
+              const Icon = isIncrease
+                ? TrendingUp
+                : isDecrease
+                ? TrendingDown
+                : Minus;
+              const iconClass = isIncrease
+                ? "bg-emerald-100 text-emerald-700"
+                : isDecrease
+                ? "bg-amber-100 text-amber-700"
+                : "bg-slate-100 text-slate-500";
+
+              return (
+                <div
+                  key={factor.feature}
+                  className="rounded-2xl border border-white bg-white p-3 shadow-sm"
+                >
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`grid h-8 w-8 flex-shrink-0 place-items-center rounded-xl ${iconClass}`}
+                    >
+                      <Icon size={14} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="truncate text-xs font-black text-slate-900">
+                          {prettifyName(factor.feature)}
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-400">
+                          entered: {formatResultValue(factor.input_value)}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
+                        {factor.message}
+                      </p>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className={`h-full rounded-full ${
+                            isIncrease
+                              ? "bg-emerald-500"
+                              : isDecrease
+                              ? "bg-amber-500"
+                              : "bg-slate-300"
+                          }`}
+                          style={{
+                            width: `${Math.max(
+                              4,
+                              Math.round((factor.relative_strength || 0) * 100)
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <details className="mt-4 rounded-xl bg-white/70 p-3 text-[10px] text-slate-500">
+            <summary className="cursor-pointer font-black text-slate-600">
+              How this explanation was calculated
+            </summary>
+            <p className="mt-2 leading-relaxed">{explanation.note}</p>
+            <div className="mt-2">
+              Method: {explanation.method} · evaluated {explanation.features_evaluated}
+              {explanation.features_total
+                ? ` of ${explanation.features_total}`
+                : ""} inputs
+            </div>
+          </details>
+        </div>
+      ) : (
+        <div className="flex items-start gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
+          <Info size={15} className="mt-0.5 flex-shrink-0" />
+          <div>
+            <div className="font-black text-slate-800">Prediction completed</div>
+            <p className="mt-1 leading-relaxed">
+              {explanation?.reason ||
+                "An explanation is not available for this saved model."}
+            </p>
+          </div>
+        </div>
+      )}
+
+      <details className="rounded-2xl border border-slate-200 bg-white p-3">
+        <summary className="cursor-pointer text-[10px] font-black uppercase tracking-wider text-slate-500">
+          Technical response
+        </summary>
+        <pre className="soft-scroll mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl bg-slate-950 p-3 text-[10px] text-emerald-300">
+          {JSON.stringify(payload, null, 2)}
+        </pre>
+      </details>
+    </div>
   );
 }
 

@@ -57,6 +57,7 @@ from app.services.docker_deployment_service import (
     stop_container,
 )
 from app.services.model_zoo_service import get_training_definitions
+from app.services.local_explanation import build_local_explanation
 from app.services.prediction_validation import (
     PredictionSchemaValidationError,
     build_input_schema,
@@ -187,6 +188,13 @@ def run_prediction_from_model_record(
             if isinstance(predictions, list) and len(predictions) == 1
             else predictions
         )
+        explanation = build_local_explanation(
+            model_path=model_record.model_path,
+            cleaned_input=cleaned_input,
+            predicted_value=final_prediction,
+            problem_type=model_record.problem_type,
+            target_column=model_record.target_column,
+        )
 
         prediction_id = generate_id("prediction")
         prediction_record = models.PredictionLog(
@@ -208,6 +216,7 @@ def run_prediction_from_model_record(
             "problem_type": model_record.problem_type,
             "target_column": model_record.target_column,
             "prediction": make_json_safe(final_prediction),
+            "explanation": make_json_safe(explanation),
             "schema_validation": validation_summary,
         }
 
@@ -1410,6 +1419,13 @@ def run_prediction_from_deployment(
             if isinstance(predictions, list) and len(predictions) == 1
             else predictions
         )
+        explanation = build_local_explanation(
+            model_path=model_record.model_path,
+            cleaned_input=cleaned_input,
+            predicted_value=final_prediction,
+            problem_type=model_record.problem_type,
+            target_column=model_record.target_column,
+        )
 
         prediction_id = generate_id("prediction")
         db.add(
@@ -1433,6 +1449,7 @@ def run_prediction_from_deployment(
             "model_id": model_record.model_id,
             "model_name": model_record.model_name,
             "prediction": make_json_safe(final_prediction),
+            "explanation": make_json_safe(explanation),
             "schema_validation": validation_summary,
         }
     except PredictionSchemaValidationError as error:
