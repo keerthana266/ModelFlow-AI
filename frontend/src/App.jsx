@@ -1079,7 +1079,7 @@ export default function App() {
             ...node.data,
             datasets,
             columns,
-            dataset_id: node.data.dataset_id || selectedDatasetId,
+            dataset_id: selectedDatasetId || node.data.dataset_id || "",
             onChange: (key, value) => {
               if (key === "dataset_id") {
                 setSelectedDatasetId(value);
@@ -1675,10 +1675,9 @@ export default function App() {
             onOpenProfile={openDatasetProfile}
           />
 
+          
           <DatasetReadinessPanel
-            datasetId={
-              activeDataLoaderData.dataset_id || selectedDatasetId
-            }
+            datasetId={selectedDatasetId || activeDataLoaderData.dataset_id || ""}
             targetColumn={activeDataLoaderData.target_column || ""}
             excludedColumns={activeDataLoaderData.excluded_columns || []}
             removeDuplicates={activeDataLoaderData.remove_duplicates === true}

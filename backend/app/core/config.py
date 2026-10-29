@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     DATABASE_URL: str = (
-        "postgresql+psycopg2://postgres:postgres@localhost:5432/automl_forge"
+        "postgresql+psycopg2://postgres:postgres@localhost:5433/automl_forge"
     )
 
     REDIS_BROKER_URL: str = "redis://localhost:6379/0"
