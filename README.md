@@ -1,565 +1,175 @@
-# 🚀 ModelPilot
+# ModelFlow AI — No-Code AutoML Platform
 
-### Production-Oriented AutoML & Machine Learning Lifecycle Platform
+ModelFlow AI is a web-based AutoML platform designed to simplify machine learning workflows. It aims to help users prepare datasets, configure experiments, train models, and evaluate performance through an interactive interface instead of writing an entire machine learning pipeline manually.
 
-ModelPilot is an end-to-end machine learning platform that simplifies the complete ML lifecycle — from **dataset ingestion and visual pipeline construction to automated model training, experiment tracking, explainability, drift monitoring, and isolated model deployment**.
+## Overview
 
-Built with a production-first architecture, ModelPilot combines **AutoML, asynchronous job processing, experiment management, model explainability, artifact storage, and containerized model serving** into a unified platform.
+Building machine learning models often requires knowledge of data preprocessing, algorithm selection, hyperparameter tuning, and model evaluation. ModelFlow AI brings these steps into a unified interface to make experimentation more accessible and organized.
 
-> **Build → Train → Evaluate → Explain → Monitor → Deploy**
+The project combines a React frontend with a FastAPI backend and supporting services for dataset management, asynchronous processing, and machine learning experiments.
 
----
+## Key Features
 
-## ✨ Key Features
+- **Interactive Web Interface:** Work with machine learning workflows through a React-based frontend.
+- **Dataset Management:** Upload datasets and inspect their columns before training.
+- **Pipeline Configuration:** Configure dataset inputs, target columns, and training settings.
+- **Automated Model Training:** Integrate automated machine learning tools to explore suitable models.
+- **Experiment Execution:** Use asynchronous task processing for training workloads.
+- **Model Evaluation:** Review model performance metrics to compare experiment results.
+- **Extensible Architecture:** Designed to support additional capabilities such as hyperparameter optimization, experiment tracking, and model explainability.
 
-* 🧩 **Visual ML Pipeline Builder** using ReactFlow
-* 🤖 **Automated Model Training** using FLAML AutoML
-* 🎯 **Hyperparameter Optimization** using Optuna
-* 📊 **Experiment Tracking** with MLflow
-* 🔍 **Model Explainability** using SHAP
-* 📈 **Data & Model Drift Monitoring**
-* 🗂️ **Artifact Storage** using MinIO / S3
-* ⚡ **Asynchronous ML Workloads** using Celery + Redis
-* 🐳 **Isolated Model Deployment** using Docker
-* 🔐 **JWT Authentication & Project Isolation**
-* 🔄 **Real-Time Updates** using WebSockets
-* 🧪 **Custom Model Zoo**
-* 📋 **Prediction Logging & Monitoring**
+*Feature availability depends on the current implementation and service configuration.*
 
----
+## Technology Stack
 
-# 🖥️ Project Preview
+| Component | Technologies |
+|---|---|
+| Frontend | React, Vite, JavaScript |
+| Backend API | Python, FastAPI |
+| Database | PostgreSQL |
+| Background Tasks | Celery, Redis |
+| Machine Learning | FLAML and related Python ML libraries |
+| Database Integration | SQLAlchemy, Alembic |
+| Infrastructure | Docker, Docker Compose |
 
-> ModelPilot is currently under active development and is not publicly deployed yet.
-> The following screenshots showcase the current working application.
-
-## 📊 Dashboard
-
-![ModelPilot Dashboard](screenshots/dashboard.png)
-
----
-
-## 🧩 Visual ML Pipeline Builder
-
-Build and execute machine learning workflows through an interactive visual pipeline interface.
-
-![Visual Pipeline Builder](screenshots/pipeline-builder.png)
-
-### Example Workflow
+## Architecture
 
 ```text
-Dataset
-   ↓
-Data Preprocessing
-   ↓
-Feature Engineering
-   ↓
-AutoML Training
-   ↓
-Model Evaluation
-   ↓
-Model Registry
-   ↓
-Deployment
+          User
+           |
+           v
+    React + Vite UI
+           |
+           v
+       FastAPI
+       /     \
+      v       v
+PostgreSQL   Redis
+                 |
+                 v
+               Celery
+                 |
+                 v
+       ML Training Tasks
+                 |
+                 v
+       Experiment Results
 ```
 
----
+The frontend communicates with the backend API. PostgreSQL provides persistent data storage, while Redis and Celery support background task processing. Machine learning components execute training and evaluation workflows.
 
-## 📈 Experiment & Model Results
-
-Track training runs, compare models, analyze performance metrics, and identify the best-performing model.
-
-![Experiment Results](screenshots/experiment-results.png)
-
----
-
-## 🔍 Model Explainability
-
-Understand model behavior through feature-level explanations powered by SHAP.
-
-![Model Explainability](screenshots/model-explainability.png)
-
----
-
-## 📡 Drift Monitoring
-
-Monitor changes in incoming data and identify potential distribution shifts that can affect model reliability.
-
-![Drift Monitoring](screenshots/drift-monitoring.png)
-
----
-
-## 🚀 Model Deployment
-
-Deploy trained models through independent Docker-based model runtimes.
-
-![Model Deployment](screenshots/model-deployment.png)
-
----
-
-# 🏗️ System Architecture
+## Project Structure
 
 ```text
-                    ┌───────────────────────┐
-                    │      React Frontend   │
-                    │   ReactFlow + Vite    │
-                    └───────────┬───────────┘
-                                │
-                                ▼
-                    ┌───────────────────────┐
-                    │      FastAPI API      │
-                    │ Authentication / API  │
-                    └───────────┬───────────┘
-                                │
-              ┌─────────────────┼─────────────────┐
-              │                 │                 │
-              ▼                 ▼                 ▼
-        ┌───────────┐     ┌───────────┐    ┌────────────┐
-        │ PostgreSQL│     │   Redis   │    │   MinIO    │
-        │ Metadata  │     │ Broker /  │    │ Artifacts  │
-        │           │     │ Backend   │    │            │
-        └───────────┘     └─────┬─────┘    └────────────┘
-                                │
-                                ▼
-                         ┌─────────────┐
-                         │   Celery    │
-                         │   Workers   │
-                         └──────┬──────┘
-                                │
-                    ┌───────────┼────────────┐
-                    │           │            │
-                    ▼           ▼            ▼
-                ┌───────┐  ┌────────┐  ┌─────────┐
-                │ FLAML │  │ Optuna │  │  SHAP   │
-                │ AutoML│  │ Tuning │  │ Explain │
-                └───────┘  └────────┘  └─────────┘
-                                │
-                                ▼
-                         ┌─────────────┐
-                         │   MLflow    │
-                         │ Experiments │
-                         │ & Registry  │
-                         └──────┬──────┘
-                                │
-                                ▼
-                       ┌──────────────────┐
-                       │ Docker Model     │
-                       │ Runtime          │
-                       │                  │
-                       │ /health          │
-                       │ /metadata        │
-                       │ /predict         │
-                       └──────────────────┘
-```
-
----
-
-# 🛠️ Tech Stack
-
-## Frontend
-
-* React
-* Vite
-* ReactFlow
-* Axios
-
-## Backend
-
-* FastAPI
-* Uvicorn
-* SQLAlchemy
-* PostgreSQL
-* Pydantic
-
-## Machine Learning
-
-* Python
-* scikit-learn
-* FLAML
-* Optuna
-* SHAP
-* pandas
-* NumPy
-* SciPy
-* joblib
-
-## MLOps & Infrastructure
-
-* MLflow
-* MinIO / S3
-* Celery
-* Redis
-* Docker
-* WebSockets
-
-## Monitoring
-
-* Evidently
-
----
-
-# 🔄 Machine Learning Lifecycle
-
-### 1. Dataset Ingestion
-
-Upload and manage datasets that serve as the foundation of the ML workflow.
-
-### 2. Pipeline Construction
-
-Create machine learning workflows using the visual pipeline builder.
-
-### 3. Automated Training
-
-FLAML automatically searches for suitable models and configurations within a specified training budget.
-
-### 4. Hyperparameter Optimization
-
-Optuna performs systematic hyperparameter optimization to improve model performance.
-
-### 5. Experiment Tracking
-
-MLflow tracks experiments, model metrics, parameters, and artifacts.
-
-### 6. Model Explainability
-
-SHAP provides feature-level explanations to understand model predictions.
-
-### 7. Drift Monitoring
-
-Evidently monitors incoming data and detects potential distribution shifts.
-
-### 8. Model Deployment
-
-Trained models can be packaged into independent Docker runtimes and exposed through prediction APIs.
-
----
-
-# 🧠 Custom Model Zoo
-
-ModelPilot includes a custom **Model Zoo** for managing reusable model implementations and trained model artifacts.
-
-The architecture is designed so that models can be independently identified, managed, and deployed instead of coupling all inference workloads to a single application process.
-
----
-
-# ⚡ Asynchronous ML Architecture
-
-Machine learning training can be computationally expensive and should not block API requests.
-
-ModelPilot separates request handling from long-running ML workloads using **Celery and Redis**.
-
-```text
-Client
-  │
-  ▼
-FastAPI
-  │
-  ▼
-Celery Task
-  │
-  ▼
-Redis
-  │
-  ▼
-Celery Worker
-  │
-  ├── Data Processing
-  ├── AutoML
-  ├── Hyperparameter Tuning
-  ├── Model Training
-  └── Artifact Generation
-```
-
-This architecture keeps the API responsive while computationally intensive workloads execute asynchronously.
-
----
-
-# 🔐 Authentication & Project Isolation
-
-ModelPilot provides secure project-level resource management.
-
-### Authentication
-
-* JWT-based authentication
-* Protected API routes
-* Token-based authorization
-
-### Project Isolation
-
-ML resources are associated with individual projects, helping prevent cross-project access to:
-
-* Datasets
-* Experiments
-* Trained Models
-* Predictions
-* Drift Reports
-* Pipeline Graphs
-* Deployment Information
-
----
-
-# 🐳 Independent Model Runtime
-
-One of the core architectural features of ModelPilot is its independent Docker-based model serving layer.
-
-Each trained model can run inside its own isolated runtime.
-
-### Model Runtime API
-
-```http
-GET /health
-```
-
-Returns the health status of the model service.
-
-```http
-GET /metadata
-```
-
-Returns model metadata and the expected feature schema.
-
-```http
-POST /predict
-```
-
-Accepts inference data and returns predictions.
-
-### Example Request
-
-```json
-{
-  "features": {
-    "feature_1": 10.5,
-    "feature_2": 20.3,
-    "feature_3": 5.7
-  }
-}
-```
-
-### Example Response
-
-```json
-{
-  "prediction": 360030.544
-}
-```
-
-This separation creates a clean boundary between the **ML management platform** and the **model inference runtime**.
-
----
-
-# 📦 Project Structure
-
-```text
-ModelPilot/
-│
+ModelFlow-AI/
 ├── backend/
 │   ├── app/
-│   │   ├── core/
-│   │   ├── db/
-│   │   ├── dependencies/
-│   │   ├── ml/
-│   │   ├── models/
-│   │   ├── routes/
-│   │   └── schemas/
-│   │
-│   ├── Dockerfile
-│   └── requirements.txt
-│
+│   ├── alembic/
+│   ├── model_runtime/
+│   └── docker-compose.yml
 ├── frontend/
 │   ├── src/
-│   │   ├── components/
-│   │   ├── nodes/
-│   │   ├── pages/
-│   │   └── services/
-│   │
-│   └── package.json
-│
-├── model-runtime/
-│   ├── app/
-│   ├── Dockerfile
-│   └── requirements.txt
-│
+│   ├── package.json
+│   └── package-lock.json
 └── README.md
 ```
 
----
+## Getting Started
 
-# 🚀 Getting Started
+### Prerequisites
 
-> ModelPilot is currently designed for local development and is not publicly deployed yet.
+Install the following before running the project:
 
-## Prerequisites
+- Python 3.11 or a compatible version
+- Node.js and npm
+- Docker Desktop
+- Git
 
-Make sure the following are installed:
-
-* Python 3.10+
-* Node.js
-* PostgreSQL
-* Redis
-* Docker
-* MinIO
-* Git
-
----
-
-## Clone the Repository
+### 1. Clone the repository
 
 ```bash
-git clone <repository-url>
-cd ModelPilot
+git clone https://github.com/keerthana266/ModelFlow-AI.git
+cd ModelFlow-AI
 ```
 
----
+### 2. Start the supporting services
 
-## Backend Setup
+Open Docker Desktop, then start the configured services from the backend directory:
 
 ```bash
 cd backend
-
-python -m venv .venv
+docker compose up -d postgres redis minio
 ```
 
-### Windows
+The services and their ports must match your local Docker Compose configuration.
 
-```bash
-.venv\Scripts\activate
-```
+### 3. Configure the backend
 
-### Linux / macOS
+Create or update the backend environment configuration using the variables required by the project. Configure database credentials, Redis, and any required object-storage settings for your environment.
 
-```bash
-source .venv/bin/activate
-```
+Install the backend dependencies using the project's dependency configuration, then activate the backend virtual environment.
 
-Install dependencies:
+### 4. Start the backend API
 
-```bash
-pip install -r requirements.txt
-```
-
-Start the FastAPI server:
+From the `backend` directory, activate your virtual environment and run:
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
----
+The API should be available at:
 
-## Start Celery Worker
+http://127.0.0.1:8000
 
-```bash
-celery -A app.celery_app.celery worker --loglevel=info
-```
+Health check:
 
----
+http://127.0.0.1:8000/health
 
-## Frontend Setup
+### 5. Start the frontend
+
+Open a second terminal:
 
 ```bash
 cd frontend
-
 npm install
 npm run dev
 ```
 
----
+Open the local URL printed by Vite in your terminal, typically:
 
-# 📊 Current Development Status
+http://localhost:5173
 
-| Feature                            | Status         |
-| ---------------------------------- | -------------- |
-| Authentication                     | ✅ Complete     |
-| Project Isolation                  | ✅ Complete     |
-| Dataset Management                 | ✅ Complete     |
-| Visual Pipeline Builder            | ✅ Complete     |
-| FLAML AutoML                       | ✅ Complete     |
-| Optuna Optimization                | ✅ Complete     |
-| MLflow Integration                 | ✅ Complete     |
-| MinIO Artifact Storage             | ✅ Complete     |
-| SHAP Explainability                | ✅ Complete     |
-| Drift Monitoring                   | ✅ Complete     |
-| WebSocket Updates                  | ✅ Complete     |
-| Custom Model Zoo                   | ✅ Complete     |
-| Independent Docker Model Runtime   | ✅ Validated    |
-| Automatic Deployment Orchestration | 🔄 In Progress |
-| Public Cloud Deployment            | 🔜 Planned     |
+**Note:** Exact environment variables, dependency installation commands, and service requirements may vary with the repository configuration.
 
----
+## Example Workflow
 
-# 🗺️ Roadmap
+1. Open the web interface.
+2. Upload a dataset.
+3. Inspect the dataset and select the target column.
+4. Configure the machine learning pipeline.
+5. Start a training experiment.
+6. Review the results and evaluation metrics.
 
-## Near Term
+## Future Improvements
 
-* [ ] Complete automated model deployment orchestration
-* [ ] Improve experiment and dataset versioning
-* [ ] Enhance model monitoring
-* [ ] Expand model registry capabilities
-* [ ] Improve deployment management UI
+- Enhanced automated feature engineering
+- More robust hyperparameter optimization
+- Experiment comparison and model versioning
+- Model explainability with SHAP
+- Dataset and model drift monitoring
+- Model deployment and inference endpoints
+- Improved experiment history and reporting
 
-## Future
+## Learning Objectives
 
-* [ ] LIME-based explainability
-* [ ] Advanced automated EDA
-* [ ] Multimodal ML support
-* [ ] PyTorch / GPU workers
-* [ ] Kubernetes-based model orchestration
-* [ ] Terraform infrastructure automation
-* [ ] Advanced collaboration and team access
-* [ ] Cloud deployment
+This project provides practical experience with full-stack development, REST API integration, database management, asynchronous processing, and machine learning workflow automation.
 
----
+## Author
 
-# 🎯 Engineering Highlights
+**Keerthana Dasari**
 
-ModelPilot focuses on solving practical engineering challenges involved in building a production-oriented ML platform:
+GitHub: [@keerthana266](https://github.com/keerthana266)
 
-* **Decoupled API and ML workloads** through Celery
-* **Persistent metadata management** through PostgreSQL
-* **Object-based artifact storage** through MinIO
-* **Experiment tracking and reproducibility** through MLflow
-* **Automated model selection** through FLAML
-* **Hyperparameter optimization** through Optuna
-* **Explainable predictions** through SHAP
-* **Data drift monitoring** through Evidently
-* **Isolated inference environments** through Docker
-* **Project-level resource isolation**
-* **Real-time application updates** through WebSockets
+## License
 
----
-
-# 🔬 Engineering Focus
-
-ModelPilot is designed around several principles:
-
-```text
-Scalability
-    +
-Modularity
-    +
-Reproducibility
-    +
-Observability
-    +
-Isolation
-    +
-Automation
-```
-
-The goal is to move beyond a traditional ML notebook workflow and provide an architecture closer to a real-world **ML platform / MLOps system**.
-
----
-
-# 👩‍💻 Author
-
-**Archita Sarkar**
-
-ModelPilot is a production-oriented machine learning engineering project combining:
-
-**AutoML • MLOps • Distributed Processing • Explainable AI • Monitoring • Containerized Deployment**
-
----
-
-## ⭐ Support
-
-If you find ModelPilot interesting, consider giving the repository a ⭐ and exploring the architecture, ML pipeline, and deployment workflow.
+Refer to the repository's license file for the applicable license and usage terms.
